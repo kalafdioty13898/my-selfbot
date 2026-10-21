@@ -18,7 +18,7 @@ def default_account():
         "off": {"all": False, "chats": {}},
         "names": [], "names_on": False, "name_i": 0,
         "bios": [], "bios_on": False, "bio_i": 0,
-        "sec": {"on": False, "mode": "all", "text": "", "cool": 5, "offline_min": 5},
+        "sec": {"on": False, "mode": "all", "text": "", "cool": 5, "offline_min": 5, "tag": False},
         "seen": {},
         "black": [],
         "quick": {},
