@@ -1,40 +1,58 @@
 # -*- coding: utf-8 -*-
 """ماژول هسته: پنل راهنما، پینگ، وضعیت، روشن/خاموش کردن سلف."""
+import html as _html
+
 from framework import Bot
 from utils import chunk_text, now, render_vars, to_jalali
 
 
 def setup(bot: Bot):
     # ---------- پنل راهنما ----------
+    SEP = "──────────────────"
+
+    def _block(hlp):
+        # فرمت ورودی: «دستور — توضیح» → خروجی: توضیح، خط جداکننده، دستور قابل کپی با ضربه
+        if " — " in hlp:
+            cmd_part, desc = hlp.split(" — ", 1)
+        else:
+            cmd_part, desc = hlp, ""
+        out = ""
+        if desc:
+            out += _html.escape(desc) + "\n"
+        out += SEP + "\n"
+        out += "دستور ---> <code>" + _html.escape(cmd_part.strip()) + "</code>"
+        return out
+
     @bot.cmd("راهنما", "help", "پنل", always=True, cat="عمومی",
-             help="راهنما — نمایش پنل کامل دستورات")
+             help="راهنما [بخش] — پنل کامل دستورات با توضیح و دستور قابل کپی؛ مثال: راهنما مدیا")
     async def _help(event, ctx, args):
         sections = {}
         for aliases, fn, _always, cat, hlp in bot.cmds:
             if not hlp:
                 continue
             sections.setdefault(cat, []).append(hlp)
-        if args:
-            want = args.strip()
-            for cat, lines in sections.items():
-                if want in (cat, cat.strip("#")) or want.lower() in (c.lower() for c in _en_cat(cat)):
-                    body = f"📘 <b>راهنمای {cat}</b>\n\n" + "\n".join(f"• {l}" for l in lines)
-                    for part in chunk_text(body):
-                        await ctx.reply(event, part, parse_mode="html")
-                    return
-            await ctx.reply(event, "❌ چنین بخشی پیدا نشد. فقط «راهنما» بفرست تا کل پنل بیاد.")
-            return
         n = now(ctx.cfg.tz)
         jy, jm, jd = to_jalali(n.date())
         head = ("🤖 <b>پنل سلف‌بوت شخصی</b>\n"
                 f"👤 {(ctx.me.first_name or '')} | 🕐 {n.strftime('%H:%M')} | "
                 f"📅 {jy}/{jm:02d}/{jd:02d}\n"
-                f"{'─' * 28}\n")
+                f"{'═' * 30}\n")
+        if args:
+            want = args.strip()
+            for cat, lines in sections.items():
+                if want in (cat, cat.strip("#")) or want.lower() in (c.lower() for c in _en_cat(cat)):
+                    body = f"\n📘 <b>راهنمای {cat}</b>\n" + "\n\n".join(_block(h) for h in lines)
+                    for part in chunk_text(head + body):
+                        await ctx.reply(event, part, parse_mode="html")
+                    return
+            await ctx.reply(event, "❌ چنین بخشی پیدا نشد. فقط «راهنما» بفرست تا کل پنل بیاد.")
+            return
         body = ""
         for cat, lines in sections.items():
-            body += f"\n<b>📌 {cat}</b>\n" + "\n".join(f"• {l}" for l in lines) + "\n"
-        body += ("\n<i>دستورهای انگلیسی با «" + ctx.cfg.prefix + "» شروع می‌شوند، فارسی‌ها بدون پیشوند.\n"
-                 "در هر بخش متن‌ها از متغیرهای TIME, DATE, RANDNUM1-99, NAME, USERNAME پشتیبانی می‌کنند.</i>")
+            body += f"\n\n📌 <b>{cat}</b>\n\n" + "\n\n".join(_block(h) for h in lines)
+        body += ("\n\n💡 <i>دستورهای انگلیسی با «" + ctx.cfg.prefix + "» کار می‌کنند (مثل !save).\n"
+                 "متن‌ها از متغیرهای TIME, DATE, RANDNUM1-99, NAME, USERNAME پشتیبانی می‌کنند.\n"
+                 "فقط یک بخش را می‌خواهی؟ بفرست: راهنما مدیا</i>")
         for part in chunk_text(head + body):
             await ctx.reply(event, part, parse_mode="html")
 
