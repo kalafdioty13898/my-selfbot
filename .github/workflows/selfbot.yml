@@ -1,0 +1,54 @@
+name: Selfbot
+
+on:
+  schedule:
+    - cron: "0 */5 * * *"   # هر ۵ ساعت یک‌بار (ربات تا ۳۵۰ دقیقه فعال می‌ماند)
+  workflow_dispatch:          # دکمه Run manually
+
+concurrency:
+  group: selfbot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write   # برای استپ keepalive (commit روزانه)
+    steps:
+      - uses: actions/checkout@v4
+
+      # هر روز یک commit خالی تا گیت‌هاب بعد ۶۰ روز بی‌فعالیتی، زمان‌بند را خاموش نکند
+      - name: Keepalive (daily empty commit)
+        if: github.event_name == 'schedule'
+        run: |
+          if [ "$(date -u +%H)" = "05" ]; then
+            git config user.name "keepalive-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git commit --allow-empty -m "keepalive" || true
+            git push || true
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Selfbot
+        env:
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          SESSION: ${{ secrets.SESSION }}
+          SESSION_1: ${{ secrets.SESSION_1 }}
+          SESSION_2: ${{ secrets.SESSION_2 }}
+          SESSION_3: ${{ secrets.SESSION_3 }}
+          SESSION_4: ${{ secrets.SESSION_4 }}
+          SESSION_5: ${{ secrets.SESSION_5 }}
+          SUDO: ${{ secrets.SUDO }}
+          STORAGE_ID: ${{ secrets.STORAGE_ID }}
+          PREFIX: ${{ secrets.PREFIX }}
+          TZ_INFO: ${{ secrets.TZ_INFO }}
+        run: python bot.py
