@@ -59,6 +59,10 @@ def build_account(client, store, cfg, key):
             except Exception:
                 log.exception("action hook error")
 
+    @client.on(events.CallbackQuery())
+    async def _on_cb(event):
+        await bot.callback(event, ctx)
+
     async def _ticker():
         while True:
             await asyncio.sleep(TICK_INTERVAL)

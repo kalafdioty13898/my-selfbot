@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""ماژول پروفایل‌گردان: چرخش خودکار اسم و بیو با متغیرهای زمان/تاریخ."""
+"""ماژول پروفایل‌گردان: چرخش خودکار اسم و بیو با متغیرهای زمان/تاریخ + ساعت زنده."""
 from telethon.tl import functions, types
 
 from framework import Bot
-from utils import render_vars
+from utils import now, render_vars
 
 ROTATE_MIN = 5  # هر چند دقیقه یک‌بار بچرخد
 
@@ -91,6 +91,92 @@ def setup(bot: Bot):
             help="بیو خاموش — چرخش خودکار بیو متوقف شود")(
         lambda e, c, a: _toggle(e, c, "bios", False, "بیو"))
 
+    # ---------- ساعت زنده در اسم و بیو ----------
+    async def _apply_clock(ctx):
+        """نوشتن ساعت فعلی کنار اسم/بیو اصلی (پایه ذخیره‌شده)."""
+        clk = ctx.acc["clk"]
+        suffix = now(ctx.cfg.tz).strftime(" | ⌚ %H:%M")
+        try:
+            if clk["name_on"]:
+                await ctx.client(functions.account.UpdateProfileRequest(
+                    first_name=((clk["name_base"] or "") + suffix)[:64]))
+            if clk["bio_on"]:
+                await ctx.client(functions.account.UpdateProfileRequest(
+                    about=((clk["bio_base"] or "") + suffix)[:70]))
+        except Exception:
+            pass
+
+    @bot.cmd("ساعت اسم روشن", "clkname", cat="پروفایل",
+             help="ساعت اسم روشن — ساعت زنده کنار اسمت (هر دقیقه آپدیت؛ تا وقتی روشنه چرخش اسم متوقفه)")
+    async def _clk_name_on(event, ctx, args):
+        clk = ctx.acc["clk"]
+        if not clk["name_on"]:
+            me = await ctx.client.get_me()
+            clk["name_base"] = me.first_name or ""
+            clk["name_on"] = True
+            await _apply_clock(ctx)
+        ctx.store.save()
+        await ctx.reply(event, "⌚ ساعت زنده به اسم اضافه شد\n🔴 خاموش: ساعت اسم خاموش")
+
+    @bot.cmd("ساعت اسم خاموش", "clknameoff", cat="پروفایل",
+             help="ساعت اسم خاموش — حذف ساعت از اسم و برگشت اسم اصلی")
+    async def _clk_name_off(event, ctx, args):
+        clk = ctx.acc["clk"]
+        if clk["name_on"]:
+            clk["name_on"] = False
+            try:
+                await ctx.client(functions.account.UpdateProfileRequest(
+                    first_name=clk["name_base"] or " "))
+            except Exception:
+                pass
+            clk["name_base"] = ""
+            ctx.store.save()
+        await ctx.reply(event, "🔴 ساعت از اسم حذف شد و اسم اصلی برگشت")
+
+    @bot.cmd("ساعت بیو روشن", "clkbio", cat="پروفایل",
+             help="ساعت بیو روشن — ساعت زنده ته بیوت (هر دقیقه آپدیت؛ تا وقتی روشنه چرخش بیو متوقفه)")
+    async def _clk_bio_on(event, ctx, args):
+        clk = ctx.acc["clk"]
+        if not clk["bio_on"]:
+            try:
+                full = await ctx.client(functions.users.GetFullUserRequest(ctx.me_id))
+                clk["bio_base"] = (full.full_user.about or "").strip()
+            except Exception:
+                clk["bio_base"] = ""
+            clk["bio_on"] = True
+            await _apply_clock(ctx)
+        ctx.store.save()
+        await ctx.reply(event, "⌚ ساعت زنده به بیو اضافه شد\n🔴 خاموش: ساعت بیو خاموش")
+
+    @bot.cmd("ساعت بیو خاموش", "clkbiooff", cat="پروفایل",
+             help="ساعت بیو خاموش — حذف ساعت از بیو و برگشت بیو اصلی")
+    async def _clk_bio_off(event, ctx, args):
+        clk = ctx.acc["clk"]
+        if clk["bio_on"]:
+            clk["bio_on"] = False
+            try:
+                await ctx.client(functions.account.UpdateProfileRequest(
+                    about=clk["bio_base"] or " "))
+            except Exception:
+                pass
+            clk["bio_base"] = ""
+            ctx.store.save()
+        await ctx.reply(event, "🔴 ساعت از بیو حذف شد و بیو اصلی برگشت")
+
+    clk_state = {"min": ""}
+
+    @bot.tick_hook
+    async def _clock_tick(ctx):
+        """هر دقیقه یک‌بار ساعت اسم/بیو را آپدیت کند."""
+        clk = ctx.acc["clk"]
+        if not (clk["name_on"] or clk["bio_on"]):
+            return
+        m = now(ctx.cfg.tz).strftime("%H:%M")
+        if m == clk_state["min"]:
+            return
+        clk_state["min"] = m
+        await _apply_clock(ctx)
+
     # ---------- تیک چرخش ----------
     @bot.tick_hook
     async def _rotate(ctx):
@@ -99,13 +185,14 @@ def setup(bot: Bot):
             return
         state["last"] = t.time()
         acc = ctx.acc
+        clk = acc.get("clk", {})
         try:
-            if acc["names_on"] and acc["names"]:
+            if acc["names_on"] and acc["names"] and not clk.get("name_on"):
                 name = render_vars(acc["names"][acc["name_i"] % len(acc["names"])],
                                    ctx.cfg.tz)[:64]
                 acc["name_i"] = (acc["name_i"] + 1) % max(1, len(acc["names"]))
                 await ctx.client(functions.account.UpdateProfileRequest(first_name=name))
-            if acc["bios_on"] and acc["bios"]:
+            if acc["bios_on"] and acc["bios"] and not clk.get("bio_on"):
                 bio = render_vars(acc["bios"][acc["bio_i"] % len(acc["bios"])],
                                   ctx.cfg.tz)[:70]
                 acc["bio_i"] = (acc["bio_i"] + 1) % max(1, len(acc["bios"]))

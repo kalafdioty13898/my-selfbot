@@ -32,6 +32,7 @@ def default_account():
         "daily": [],
         "autodel": {},
         "cloud": {},
+        "clk": {"name_on": False, "name_base": "", "bio_on": False, "bio_base": ""},
     }
 
 

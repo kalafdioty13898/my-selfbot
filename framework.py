@@ -82,6 +82,7 @@ class Bot:
         self.delete_hooks = []
         self.action_hooks = []
         self.tick_hooks = []
+        self.cb_hooks = []      # دکمه‌های شیشه‌ای (CallbackQuery)
 
     def cmd(self, *aliases, always=False, cat="عمومی", help=None):
         def deco(fn):
@@ -111,6 +112,10 @@ class Bot:
 
     def tick_hook(self, fn):
         self.tick_hooks.append(fn)
+        return fn
+
+    def cb_hook(self, fn):
+        self.cb_hooks.append(fn)
         return fn
 
     def match_order(self):
@@ -178,3 +183,10 @@ class Bot:
                 await h(ctx)
             except Exception:
                 log.exception("tick hook error")
+
+    async def callback(self, event, ctx):
+        for h in self.cb_hooks:
+            try:
+                await h(event, ctx)
+            except Exception:
+                log.exception("cb hook error")
