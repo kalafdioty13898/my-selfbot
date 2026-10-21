@@ -23,6 +23,7 @@ def default_account():
         "black": [],
         "quick": {},
         "ad": {"del": True, "edit": True, "ttl": True, "relay": None},
+        "autosave": {},
         "welcome": {},
         "lock": {},
         "mute": {},
