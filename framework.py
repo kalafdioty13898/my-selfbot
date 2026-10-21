@@ -75,6 +75,7 @@ class Bot:
 
     def __init__(self):
         self.cmds = []          # (aliases, fn, always, cat, help)
+        self._order = None      # ترتیب تطبیق (دستورهای طولانی‌تر اول)
         self.msg_hooks = []     # (event, ctx)
         self.out_hooks = []
         self.edit_hooks = []
@@ -112,6 +113,13 @@ class Bot:
         self.tick_hooks.append(fn)
         return fn
 
+    def match_order(self):
+        """دستورهای طولانی‌تر اول چک شوند تا «ذخیره زماندار روشن»
+        قربانی تطبیق پیشوندی «ذخیره» نشود (باگ اولویت)."""
+        if self._order is None:
+            self._order = sorted(self.cmds, key=lambda c: -max(len(a) for a in c[0]))
+        return self._order
+
     async def dispatch(self, event, ctx):
         from utils import match_cmd
         msg = event.message
@@ -139,7 +147,7 @@ class Bot:
 
         chat_id = event.chat_id
         acc = ctx.acc
-        for aliases, fn, always, _, _ in self.cmds:
+        for aliases, fn, always, _, _ in self.match_order():
             arg = None
             for a in aliases:
                 arg = match_cmd(text, a, ctx.cfg.prefix)
