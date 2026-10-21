@@ -1,25 +1,26 @@
 # -*- coding: utf-8 -*-
-"""ماژول هسته: پنل عکسی با دکمه‌های شیشه‌ای، پینگ، وضعیت، روشن/خاموش کردن سلف."""
-import html as _html
+"""ماژول هسته: پنل عکسی با منوی شماره‌ای، پینگ، وضعیت، روشن/خاموش کردن سلف.
 
-from telethon import Button
+نکته: تلگرام اجازه دکمه اینلاین فقط به بات‌ها می‌دهد؛ اکانت یوزر نمی‌تواند،
+پس منو شماره‌ای است: «پنل 2» یا «پنل منشی»."""
+import html as _html
 
 from framework import Bot
 from utils import chunk_text, now, to_jalali, tmp_path
 
-# ترتیب دکمه‌های پنل + آیکون هر بخش (فقط بخش‌های موجود نشان داده می‌شوند)
+# ترتیب بخش‌های پنل + آیکون هر بخش (فقط بخش‌های موجود نشان داده می‌شوند)
 CATS = [
     ("پروفایل", "👤"), ("گروه", "👥"), ("منشی", "🤖"), ("یادآور", "⏰"),
     ("مدیا", "💾"), ("آنتی‌حذف", "🛡️"), ("ترجمه", "🌐"), ("پاسخ سریع", "💬"),
     ("ابری", "☁️"), ("عمومی", "🧩"),
 ]
 
-CAPTION_MAX = 1000  # سقف کپشن تلگرام 1024 است
 SEP = "──────────────────"
+NUMS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 
 def setup(bot: Bot):
-    # ---------- پنل عکسی با دکمه شیشه‌ای ----------
+    # ---------- پنل عکسی با منوی شماره‌ای ----------
     def _sections():
         out = {}
         for _aliases, _fn, _always, cat, hlp in bot.cmds:
@@ -44,43 +45,27 @@ def setup(bot: Bot):
         out += "دستور ---> <code>" + _html.escape(cmd_part.strip()) + "</code>"
         return out
 
-    def _compact(cat, lines):
-        out = f"📌 <b>{cat}</b>\n\n"
-        for h in lines:
-            cmd_part, _, desc = h.partition(" — ")
-            row = f"• <code>{_html.escape(cmd_part.strip())}</code>"
-            if desc:
-                row += " — " + _html.escape(desc if len(desc) <= 60 else desc[:57] + "…")
-            out += row + "\n"
-        return out
-
-    def _home_caption(ctx):
+    def _menu_text(ctx):
         n = now(ctx.cfg.tz)
         jy, jm, jd = to_jalali(n.date())
         uname = ("@" + ctx.me.username) if getattr(ctx.me, "username", None) else "—"
+        avail = _avail()
+        menu = "\n".join(
+            f"{NUMS[i]} {icon} <b>{cat}</b>  →  <code>پنل {i + 1}</code>"
+            for i, (cat, icon) in enumerate(avail))
         return ("🤖 <b>پنل سلف‌بوت شخصی</b>\n"
                 f"👤 {_html.escape(ctx.me.first_name or '')}\n"
                 f"🆔 <code>{ctx.me_id}</code>  |  {uname}\n"
                 f"🕐 {n.strftime('%H:%M')}  |  📅 {jy}/{jm:02d}/{jd:02d}\n"
-                f"<i>👇 یکی از دکمه‌های شیشه‌ای را بزن</i>")
-
-    def _home_buttons(avail, with_back=False):
-        rows, row = [], []
-        for i, (cat, icon) in enumerate(avail):
-            row.append(Button.inline(f"{icon} {cat}", f"p:{i}".encode()))
-            if len(row) == 2:
-                rows.append(row)
-                row = []
-        if row:
-            rows.append(row)
-        rows.append([Button.inline("📊 وضعیت", b"p:s")])
-        if with_back:
-            rows.append([Button.inline("🔄 بازگشت", b"p:h")])
-        return rows
+                + SEP + "\n"
+                "<i>بخش را باز کن — شماره یا اسمش را بفرست:</i>\n"
+                + menu
+                + "\n" + SEP + "\n"
+                "📊 وضعیت  →  <code>پنل وضعیت</code>\n"
+                "🔄 منوی اول  →  <code>پنل</code>")
 
     async def _send_panel(event, ctx):
-        cap = _home_caption(ctx)
-        btns = _home_buttons(_avail())
+        cap = _menu_text(ctx)
         path = None
         try:
             path = await ctx.client.download_profile_media(ctx.me, file=tmp_path("jpg"))
@@ -89,26 +74,38 @@ def setup(bot: Bot):
         if path:
             try:
                 await ctx.client.send_file(event.chat_id, path, caption=cap,
-                                           parse_mode="html", buttons=btns)
+                                           parse_mode="html")
                 return
             except Exception:
                 pass
-        await ctx.reply(event, cap, parse_mode="html", buttons=btns)
+        await ctx.reply(event, cap, parse_mode="html")
+
+    def _find_section(want):
+        """شماره یا اسم بخش را پیدا کند؛ None یعنی پیدا نشد."""
+        avail = _avail()
+        if want.isdigit() and 1 <= int(want) <= len(avail):
+            return avail[int(want) - 1][0]
+        for cat, _icon in avail:
+            if want in (cat, cat.strip("#")) or want.lower() in (c.lower() for c in _en_cat(cat)):
+                return cat
+        return None
 
     @bot.cmd("راهنما", "help", "پنل", always=True, cat="عمومی",
-             help="راهنما [بخش] — پنل عکسی با دکمه‌های شیشه‌ای؛ متن کامل یک بخش: راهنما مدیا")
+             help="پنل — پنل عکسی با منوی بخش‌ها (پنل 2 یا پنل منشی)؛ راهنما مدیا — توضیح کامل یک بخش")
     async def _help(event, ctx, args):
         if not args.strip():
             return await _send_panel(event, ctx)
-        head = "🤖 <b>پنل سلف‌بوت شخصی</b>\n" + f"{'═' * 30}\n"
         want = args.strip()
-        for cat, lines in _sections().items():
-            if want in (cat, cat.strip("#")) or want.lower() in (c.lower() for c in _en_cat(cat)):
-                body = f"\n📘 <b>راهنمای {cat}</b>\n" + "\n\n".join(_block(h) for h in lines)
-                for part in chunk_text(head + body):
-                    await ctx.reply(event, part, parse_mode="html")
-                return
-        await ctx.reply(event, "❌ چنین بخشی پیدا نشد. فقط «راهنما» بفرست تا کل پنل بیاد.")
+        if want in ("وضعیت", "status"):
+            return await ctx.reply(event, _status_text(ctx), parse_mode="html")
+        cat = _find_section(want)
+        if cat is None:
+            return await ctx.reply(event,
+                                   "❌ چنین بخشی پیدا نشد. فقط «پنل» بفرست تا منوی کامل بیاد.")
+        head = "🤖 <b>پنل سلف‌بوت شخصی</b>\n" + f"{'═' * 30}\n"
+        body = f"\n📘 <b>راهنمای {cat}</b>\n" + "\n\n".join(_block(h) for h in _sections()[cat])
+        for part in chunk_text(head + body):
+            await ctx.reply(event, part, parse_mode="html")
 
     def _en_cat(cat):
         m = {"عمومی": ["عمومی", "core"], "مدیا": ["مدیا", "media"],
@@ -117,31 +114,6 @@ def setup(bot: Bot):
              "گروه": ["group"], "یادآور": ["reminder"],
              "ترجمه": ["translate"], "ابری": ["cloud"]}
         return m.get(cat, [cat])
-
-    @bot.cb_hook
-    async def _panel_cb(event, ctx):
-        data = (event.data or b"").decode("utf-8", "ignore")
-        if not data.startswith("p:"):
-            await event.answer()
-            return
-        if not ctx.is_sudo(event.sender_id or 0):
-            return await event.answer("⛔ این پنل مال تو نیست!", alert=True)
-        key = data[2:]
-        avail = _avail()
-        if key == "h":
-            await event.edit(_home_caption(ctx), parse_mode="html",
-                             buttons=_home_buttons(avail))
-        elif key == "s":
-            await event.edit(_status_text(ctx), parse_mode="html",
-                             buttons=_home_buttons(avail, with_back=True))
-        elif key.isdigit() and int(key) < len(avail):
-            cat, _icon = avail[int(key)]
-            cap = _compact(cat, _sections().get(cat, []))
-            if len(cap) > CAPTION_MAX:
-                cap = cap[:CAPTION_MAX] + "\n…\n💡 متن کامل: راهنما " + cat
-            await event.edit(cap, parse_mode="html",
-                             buttons=_home_buttons(avail, with_back=True))
-        await event.answer()
 
     # ---------- پینگ ----------
     @bot.cmd("پینگ", "ping", always=True, cat="عمومی", help="پینگ — سرعت پاسخ ربات")
