@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""ماژول مدیا: ذخیره محتوای restricted، دریافت استوری، ذخیره مدیای زمان‌دار."""
+"""ماژول مدیا: ذخیره محتوای restricted، دریافت استوری، ذخیره مدیای زمان‌دار (دستی و خودکار)."""
+import html as _html
 import os
 
 from telethon.tl import functions, types
@@ -12,7 +13,7 @@ MAX_DL = 512 * 1024 * 1024  # سقف دانلود ۵۱۲ مگ
 
 def setup(bot: Bot):
     @bot.cmd("ذخیره", "save", cat="مدیا",
-             help="ذخیره / !save (ریپلی) — ذخیره پست محدودشده (فیلم/موزیک/عکس)")
+             help="ذخیره — روی پیام موردنظر ریپلی کن؛ فیلم/موزیک/عکس و پست‌های محدودشده ذخیره می‌شوند")
     async def _save(event, ctx, args):
         if not event.is_reply:
             return await ctx.reply(event, "❗ روی پیام موردنظر ریپلی کن")
@@ -69,35 +70,91 @@ def setup(bot: Bot):
         except Exception as e:
             await ctx.client.edit_message(event.chat_id, note.id, f"❌ خطا: {e}")
 
-    # ---------- مدیای زمان‌دار (self-destruct) ----------
+    # ---------- مدیای زمان‌دار (self-destruct) — حالت همگانی ----------
     @bot.cmd("ذخیره زماندار روشن", "ttlon", cat="مدیا",
-             help="ذخیره زماندار روشن — عکس/فیلم زمان‌دار خودکار ذخیره شود")
+             help="ذخیره زماندار روشن — در همه چت‌ها مدیای تایم‌دار خودکار ذخیره شود (حالت همگانی)")
     async def _ttlon(event, ctx, args):
         ctx.acc["ad"]["ttl"] = True
         ctx.store.save()
-        await ctx.reply(event, "✅ ذخیره خودکار مدیای زمان‌دار روشن شد")
+        await ctx.reply(event, "✅ ذخیره خودکار مدیای زمان‌دار در همه چت‌ها روشن شد")
 
     @bot.cmd("ذخیره زماندار خاموش", "ttloff", cat="مدیا",
-             help="ذخیره زماندار خاموش — غیرفعال کردن ذخیره زمان‌دار")
+             help="ذخیره زماندار خاموش — غیرفعال کردن حالت همگانی ذخیره تایم‌دار")
     async def _ttloff(event, ctx, args):
         ctx.acc["ad"]["ttl"] = False
         ctx.store.save()
-        await ctx.reply(event, "✅ ذخیره خودکار مدیای زمان‌دار خاموش شد")
+        await ctx.reply(event, "✅ حالت همگانی ذخیره تایم‌دار خاموش شد")
+
+    # ---------- ذخیره خودکار تایم‌دار — مخصوص هر چت (مثل چنل سلف) ----------
+    @bot.cmd("ذخیره خودکار", "autosave", cat="مدیا",
+             help="ذخیره خودکار [@کانال | خاموش | لیست] — داخل چتی که این دستور را می‌فرستی، هر عکس/فیلم/گیف/ویس تایم‌دار بدون ریپلی خودکار ذخیره می‌شود؛ مقصد: چت ذخیره‌سازی یا کانالی که می‌دهی")
+    async def _autosave(event, ctx, args):
+        a = (args or "").strip()
+        key = str(event.chat_id)
+        auto = ctx.acc.setdefault("autosave", {})
+        if a in ("خاموش", "off", "غیرفعال"):
+            if auto.pop(key, None) is None:
+                return await ctx.reply(event, "ℹ️ ذخیره خودکار در این چت اصلاً روشن نبود")
+            ctx.store.save()
+            return await ctx.reply(event, "🔴 ذخیره خودکار این چت خاموش شد")
+        if a in ("لیست", "list", "ها"):
+            if not auto:
+                return await ctx.reply(event, "ℹ️ هیچ چتی فعال نشده. داخل چت بفرست: ذخیره خودکار")
+            rows = [f"• چت <code>{_html.escape(k)}</code> → مقصد <code>{_html.escape(str(v))}</code>"
+                    for k, v in auto.items()]
+            return await ctx.reply(event, "📍 ذخیره خودکار فعال:\n" + "\n".join(rows), parse_mode="html")
+        if a:
+            try:
+                ent = await ctx.client.get_entity(
+                    int(a) if a.lstrip("-").isdigit() else (a if a.startswith("@") else "@" + a))
+                dest = ("@" + ent.username) if getattr(ent, "username", None) else str(ent.id)
+            except Exception:
+                return await ctx.reply(
+                    event, "❌ مقصد پیدا نشد! یوزرنیم کانال رو درست بده (مثل @self_me_me)")
+        else:
+            dest = "relay"  # چت ذخیره‌سازی پیش‌فرض: STORAGE_ID یا پیام‌های ذخیره‌شده
+        auto[key] = dest
+        ctx.store.save()
+        d_txt = ("چت ذخیره‌سازی پیش‌فرض (STORAGE_ID یا پیام‌های ذخیره‌شده)"
+                 if dest == "relay" else dest)
+        await ctx.reply(
+            event,
+            "🟢 ذخیره خودکار تایم‌دار این چت روشن شد!\n"
+            "📥 از این به بعد هر عکس/فیلم/گیف/ویس تایم‌دار که اینجا بیاد، "
+            "بدون ریپلی خودکار ذخیره می‌شود.\n"
+            f"📬 مقصد: {d_txt}\n"
+            "⛔ خاموش کردن: «ذخیره خودکار خاموش»")
 
     @bot.msg_hook
     async def _ttl_catch(event, ctx):
         msg = event.message
-        if not msg or not ctx.acc["ad"]["ttl"]:
+        if not msg or msg.out:
             return
         media = msg.media
         ttl = getattr(media, "ttl_seconds", 0) if media else 0
         if not ttl or isinstance(media, (types.MessageMediaWebPage,)):
             return
+        auto = ctx.acc.setdefault("autosave", {})
+        dest = None
+        d = auto.get(str(event.chat_id))
+        if d is not None:
+            if d == "relay":
+                dest = ctx.relay_chat()
+            elif str(d).lstrip("-").isdigit():
+                dest = int(d)
+            else:
+                dest = d
+            if str(dest) == str(event.chat_id):
+                return  # مقصد همین چت است — حلقه نشود
+        elif ctx.acc["ad"]["ttl"]:
+            dest = ctx.relay_chat()
+        if dest is None:
+            return
         try:
             path = await msg.download_media(file=tmp_path("ttl"))
             if path:
                 await ctx.client.send_file(
-                    ctx.relay_chat(), path,
+                    dest, path,
                     caption="⏲ مدیای زمان‌دار (قبل از حذف شدن ذخیره شد)")
                 os.remove(path)
         except Exception:
