@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""ماژول آنتی‌حذف: بازیابی پیام‌های حذف/ویرایش‌شده از کش."""
+"""ماژول آنتی‌حذف: بازیابی پیام‌های حذف/ویرایش‌شده از کش.
+فیلتر گزارش: پیوی همه پیام‌ها؛ گروه/کانال فقط اگر پیام منشن خودت باشد
+یا ریپلای به یکی از پیام‌های خودت — بقیه گزارش نمی‌شود."""
+import html as _html
 import logging
 import os
 import time
@@ -25,7 +28,10 @@ def setup(bot: Bot):
             if msg.id in cache:
                 cache.move_to_end(msg.id)
             item = {"chat": event.chat_id, "text": msg.raw_text or "",
-                    "path": None, "sender": msg.sender_id}
+                    "path": None, "sender": msg.sender_id,
+                    "title": getattr(event.chat, "title", None),
+                    "mentioned": bool(getattr(msg, "mentioned", False)),
+                    "reply_to": msg.reply_to_msg_id}
             # مدیای کوچک را دانلود می‌کنیم تا بعد از حذف قابل ارسال باشد
             if msg.media and item["chat"] is not None:
                 size = msg.file.size if msg.file else 0
@@ -48,8 +54,67 @@ def setup(bot: Bot):
     def relay(ctx):
         return ctx.acc["ad"]["relay"] or ctx.relay_chat()
 
+    # ---------- فیلتر گزارش: فقط چیزهایی که به خودت ربط دارد ----------
+    TAGS = {"mention": "🔖 <b>منشن تو بود!</b>\n",
+            "reply": "↩️ <b>ریپلای به پیام تو بود</b>\n"}
+
+    def _pv(cid):
+        """پیوی (و پیام‌های ذخیره‌شده): آیدی مثبت یا نامشخص."""
+        return cid is None or cid >= 0
+
+    def _chat_label(cid, title):
+        if title:
+            return f"{_html.escape(str(title))} (<code>{cid}</code>)"
+        return f"<code>{cid}</code>"
+
+    async def _who(ctx, uid):
+        """اسم خوانا برای ارسال‌کننده (در زمان گزارش، نه برای هر پیام)."""
+        if not uid:
+            return "نامشخص"
+        try:
+            e = await ctx.client.get_entity(uid)
+            name = " ".join(x for x in [getattr(e, "first_name", None),
+                                        getattr(e, "last_name", None)] if x)
+            if getattr(e, "username", None):
+                return f"{_html.escape(name)} (@{e.username})" if name else f"@{e.username}"
+            return _html.escape(name) if name else f"<code>{uid}</code>"
+        except Exception:
+            return f"<code>{uid}</code>"
+
+    def _del_reason(item, me_id):
+        """چرا این حذف گزارش شود؟ None یعنی ربطی به تو نداشت."""
+        if _pv(item.get("chat")):
+            return "pv"
+        if item.get("mentioned"):
+            return "mention"
+        rt = item.get("reply_to")
+        if rt:
+            t = cache.get(rt)
+            if t and t.get("sender") == me_id:
+                return "reply"
+        return None
+
+    async def _edit_reason(msg, event, ctx):
+        """همان فیلتر برای ویرایش (با یک fetch کمکی در صورت نیاز)."""
+        if _pv(event.chat_id):
+            return "pv"
+        if getattr(msg, "mentioned", False):
+            return "mention"
+        rt = msg.reply_to_msg_id
+        if rt:
+            t = cache.get(rt)
+            if t and t.get("sender") == ctx.me_id:
+                return "reply"
+            try:
+                r = await event.get_reply_message()
+                if r and (r.out or r.sender_id == ctx.me_id):
+                    return "reply"
+            except Exception:
+                pass
+        return None
+
     @bot.cmd("ذخیره حذف روشن", "adon", cat="آنتی‌حذف",
-             help="ذخیره حذف روشن — پیام‌های حذف‌شده به چت ریلم ارسال شود")
+             help="ذخیره حذف روشن — گزارش حذف فعال شود: پیوی همه؛ گروه‌ها فقط منشن یا ریپلای به پیام خودت")
     async def _ad_on(event, ctx, args):
         ctx.acc["ad"]["del"] = True
         ctx.store.save()
@@ -63,7 +128,7 @@ def setup(bot: Bot):
         await ctx.reply(event, "✅ آنتی‌حذف خاموش شد")
 
     @bot.cmd("ذخیره ویرایش روشن", "edon", cat="آنتی‌حذف",
-             help="ذخیره ویرایش روشن — پیام‌های ویرایش‌شده گزارش شود")
+             help="ذخیره ویرایش روشن — گزارش ویرایش با قبل/بعد: پیوی همه؛ گروه‌ها فقط منشن یا ریپلای به خودت")
     async def _ed_on(event, ctx, args):
         ctx.acc["ad"]["edit"] = True
         ctx.store.save()
@@ -102,16 +167,21 @@ def setup(bot: Bot):
             return
         dest = relay(ctx)
         for item in found[:10]:
+            why = _del_reason(item, ctx.me_id)
+            if why is None:
+                continue
             try:
-                who = f"<code>{item['sender']}</code>" if item.get("sender") else "نامشخص"
-                cap = (f"🗑 <b>پیام حذف‌شده</b>\n👤 ارسال‌کننده: {who}\n"
-                       f"💬 چت: <code>{item['chat']}</code>")
+                who = await _who(ctx, item.get("sender"))
+                tag = TAGS.get(why, "")
+                cap = (f"{tag}🗑 <b>پیام حذف‌شده</b>\n"
+                       f"👤 ارسال‌کننده: {who}\n"
+                       f"💬 چت: {_chat_label(item.get('chat'), item.get('title'))}")
                 if item.get("path") and os.path.exists(item["path"]):
                     await ctx.client.send_file(dest, item["path"], caption=cap,
                                                parse_mode="html")
                     os.remove(item["path"])
                 elif item.get("text"):
-                    await ctx.client.send_message(dest, cap + "\n\n📝 " + item["text"],
+                    await ctx.client.send_message(dest, cap + "\n\n📝 " + _html.escape(item["text"]),
                                                   parse_mode="html")
             except Exception:
                 log.exception("anti-delete relay failed")
@@ -127,12 +197,19 @@ def setup(bot: Bot):
         new_text = msg.raw_text or ""
         if (old.get("text") or "") == new_text:
             return
+        why = await _edit_reason(msg, event, ctx)
+        if why is None:
+            old["text"] = new_text
+            return
         try:
+            who = await _who(ctx, msg.sender_id)
+            tag = TAGS.get(why, "")
             await ctx.client.send_message(
                 relay(ctx),
-                f"✏️ <b>پیام ویرایش شد</b>\n👤 <code>{msg.sender_id}</code>\n"
-                f"💬 چت: <code>{event.chat_id}</code>\n\n"
-                f"<b>قبل:</b> {old.get('text') or '—'}\n\n<b>بعد:</b> {new_text}",
+                f"{tag}✏️ <b>پیام ویرایش شد</b>\n👤 {who}\n"
+                f"💬 چت: {_chat_label(event.chat_id, getattr(event.chat, 'title', None))}\n\n"
+                f"<b>قبل:</b> {_html.escape(old.get('text') or '—')}\n\n"
+                f"<b>بعد:</b> {_html.escape(new_text)}",
                 parse_mode="html")
         except Exception:
             pass
