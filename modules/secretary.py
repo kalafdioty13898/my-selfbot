@@ -48,6 +48,7 @@ def setup(bot: Bot):
                         f"🤖 منشی: {'✅ روشن' if s['on'] else '❌ خاموش'}\n"
                         f"🧠 حالت: {s['mode']}\n⏳ فاصله جواب: {s['cool']} دقیقه\n"
                         f"😴 آستانه افلاین: {s['offline_min']} دقیقه\n"
+                        f"🏷 جواب منشن در گروه: {'✅ روشن' if s.get('tag') else '❌ خاموش'}\n"
                         f"💬 پیام: {s['text'] or '—'}")
 
     @bot.cmd("منشی هوشمند روشن", "secsmart", cat="منشی",
@@ -64,7 +65,10 @@ def setup(bot: Bot):
         ctx.acc["sec"]["mode"] = "offline"
         ctx.acc["sec"]["on"] = True
         ctx.store.save()
-        await ctx.reply(event, "😴 حالت افلاین فعال شد")
+        await ctx.reply(event,
+                        "😴 حالت افلاین فعال شد\n"
+                        f"بعد از {ctx.acc['sec']['offline_min']} دقیقه که پیام ندادی، به پیام‌های خصوصی جواب می‌دهد\n"
+                        "📏 تغییر آستانه: تنظیم منشی افلاین 10")
 
     @bot.cmd("تنظیم منشی افلاین", "secoffmin", cat="منشی",
              help="تنظیم منشی افلاین <دقیقه> — آستانه افلاین بودن")
@@ -87,6 +91,21 @@ def setup(bot: Bot):
         ctx.acc["sec"]["cool"] = v
         ctx.store.save()
         await ctx.reply(event, f"✅ فاصله جواب منشی: {v} دقیقه")
+
+    @bot.cmd("منشی تگ روشن", "sectagon", cat="منشی",
+             help="منشی تگ روشن — توی گروه‌ها هم وقتی منشنت کنند جواب بدهد")
+    async def _tagon(event, ctx, args):
+        ctx.acc["sec"]["tag"] = True
+        ctx.store.save()
+        await ctx.reply(event, "🏷 منشی برای منشن‌های گروه هم روشن شد\n"
+                                "(فقط وقتی منشنت کنند جواب می‌دهد — نه هر پیام گروه)")
+
+    @bot.cmd("منشی تگ خاموش", "sectagoff", cat="منشی",
+             help="منشی تگ خاموش — جواب منشن در گروه‌ها خاموش شود")
+    async def _tagoff(event, ctx, args):
+        ctx.acc["sec"]["tag"] = False
+        ctx.store.save()
+        await ctx.reply(event, "🏷 منشی تگ در گروه‌ها خاموش شد")
 
     # ---------- لیست سیاه ----------
     async def _add_black(event, ctx, args):
@@ -118,15 +137,22 @@ def setup(bot: Bot):
             event, "⛔ لیست سیاه:\n" + "\n".join(f"• <code>{i}</code>" for i in ctx.acc["black"])
             if ctx.acc["black"] else "ℹ️ خالی است"))
 
-    # ---------- هوک پیام خصوصی ----------
+    # ---------- هوک پیام خصوصی + منشن گروه ----------
     @bot.msg_hook
     async def _secretary(event, ctx):
         msg = event.message
-        if msg.out or not event.is_private:
+        if msg.out:
             return
         s = ctx.acc["sec"]
         if not s["on"] or not s["text"]:
             return
+        private = event.is_private
+        if not private:
+            # گروه: فقط اگر «منشی تگ روشن» باشد و پیام منشن خودت باشد
+            if not s.get("tag"):
+                return
+            if not getattr(msg, "mentioned", False):
+                return
         uid = msg.sender_id
         if not uid or ctx.is_sudo(uid):
             return
@@ -158,7 +184,10 @@ def setup(bot: Bot):
             return
         last_reply[uid] = now_ts
         try:
-            await ctx.client.send_message(
-                uid, render_vars(s["text"], ctx.cfg.tz, user=sender))
+            text = render_vars(s["text"], ctx.cfg.tz, user=sender)
+            if private:
+                await ctx.client.send_message(uid, text)
+            else:
+                await event.reply(text)
         except Exception:
             pass
