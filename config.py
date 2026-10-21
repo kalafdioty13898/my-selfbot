@@ -26,10 +26,10 @@ class Config:
         self.sudo = os.getenv("SUDO", "")
         # چت ذخیره‌سازی/پایگاه‌داده (کانال خصوصی یا Saved Messages اگه خالی باشه)
         self.storage_id = self._parse_chat(os.getenv("STORAGE_ID", ""))
-        # پیشوند دستورات انگلیسی
-        self.prefix = os.getenv("PREFIX", "!").strip() or "!"
-        # منطقه زمانی
-        self.tz = os.getenv("TZ_INFO", "Asia/Tehran")
+        # پیشوند دستورات انگلیسی (اگر Secret خالی بود، پیش‌فرض)
+        self.prefix = (os.getenv("PREFIX") or "!").strip() or "!"
+        # منطقه زمانی (اگر Secret خالی بود، پیش‌فرض تهران)
+        self.tz = (os.getenv("TZ_INFO") or "Asia/Tehran").strip() or "Asia/Tehran"
         # فایل کش محلی
         self.db_file = os.getenv("DB_FILE", "data/db.json")
 

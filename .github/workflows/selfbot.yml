@@ -49,6 +49,6 @@ jobs:
           SESSION_5: ${{ secrets.SESSION_5 }}
           SUDO: ${{ secrets.SUDO }}
           STORAGE_ID: ${{ secrets.STORAGE_ID }}
-          PREFIX: ${{ secrets.PREFIX }}
-          TZ_INFO: ${{ secrets.TZ_INFO }}
+          PREFIX: ${{ secrets.PREFIX || '!' }}
+          TZ_INFO: ${{ secrets.TZ_INFO || 'Asia/Tehran' }}
         run: python bot.py
