@@ -21,6 +21,114 @@ logging.getLogger("telethon").setLevel(logging.WARNING)
 log = logging.getLogger("selfbot")
 
 TICK_INTERVAL = 20
+MAX_DYNAMIC = 25  # سقف اکانت‌های مشتری‌های فروشگاه در هر ران
+
+
+class DynamicPool:
+    """اکانت‌های مشتری‌های فروشگاه star self — استارت/استاپ زنده بدون ری‌استارت.
+
+    فروشگاه بعد از هر خرید star.db را پوش می‌کند؛ ShopSync سشن جدید را
+    می‌دهد و اینجا همان لحظه کلاینتش بالا می‌آید (≤ ۲ دقیقه بعد از خرید).
+    """
+
+    def __init__(self, cfg, store):
+        self.cfg = cfg
+        self.store = store
+        self.units = {}   # uid -> (client, (ticker_task, monitor_task))
+        self.dead = asyncio.Queue()  # uid هایی که کلاینت‌شان ناگهانی مرد
+        self._seq = 1000
+
+    def _buyer_cfg(self):
+        import copy
+        c = copy.copy(self.cfg)
+        c.sudo = ""  # حریم خصوصی: فقط خود مشتری روی سلفتش کنترل دارد
+        return c
+
+    async def start(self, uid: str, session: str) -> bool:
+        if uid in self.units:
+            # سشن این uid عوض شده — قدیمی را قطع کن و از نو بساز
+            await self.stop(uid)
+        if len(self.units) >= MAX_DYNAMIC:
+            log.warning("ظرفیت داینامیک پر است (%d) — %s رد شد", MAX_DYNAMIC, uid)
+            return False
+        client = TelegramClient(
+            StringSession(session), self.cfg.api_id, self.cfg.api_hash,
+            device_model="Desktop", system_version="Windows 10",
+            app_version="Star Self 1.0",
+        )
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                await client.disconnect()
+                return False
+        except Exception as e:
+            log.warning("کلاینت مشتری %s وصل نشد: %s", uid, e)
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            return False
+        try:
+            n = self._seq
+            self._seq += 1
+            bot, ctx, ticker = build_account(client, self.store, self._buyer_cfg(), f"u{uid}")
+            await ctx.init()
+            tick_task = asyncio.create_task(ticker())
+            self.units[uid] = (client, (tick_task, None))
+
+            async def _monitor():
+                """مرگ غیرمنتظره کلاینت (بن/قطعی) → از پول خارج + گزارش به ShopSync."""
+                try:
+                    await client.run_until_disconnected()
+                except Exception:
+                    pass
+                cur = self.units.get(uid)
+                if cur and cur[0] is client:  # نه از مسیر stop() دستی
+                    self.units.pop(uid, None)
+                    tick_task.cancel()
+                    try:
+                        self.dead.put_nowait(uid)
+                    except Exception:
+                        pass
+                    log.warning("کلاینت مشتری %s قطع شد — بعد از پول بعدی دوباره استارت می‌شود", uid)
+
+            mon_task = asyncio.create_task(_monitor())
+            self.units[uid] = (client, (tick_task, mon_task))
+            log.info("🛒 اکانت مشتری %s آماده شد: %s (id=%s)",
+                     uid, (ctx.me.first_name or ""), ctx.me_id)
+            return True
+        except Exception:
+            log.exception("setup buyer %s failed", uid)
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            self.units.pop(uid, None)
+            return False
+
+    async def stop(self, uid: str):
+        unit = self.units.pop(uid, None)
+        if not unit:
+            return
+        client, tasks = unit
+        for t in (tasks or ()):  # (ticker, monitor)
+            if t:
+                t.cancel()
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        if tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*[t for t in tasks if t], return_exceptions=True), 10)
+            except Exception:
+                pass
+        log.info("اکانت مشتری %s قطع شد", uid)
+
+    async def stop_all(self):
+        for uid in list(self.units.keys()):
+            await self.stop(uid)
 
 
 def build_account(client, store, cfg, key):
@@ -82,7 +190,7 @@ async def main():
         client = TelegramClient(
             StringSession(s), cfg.api_id, cfg.api_hash,
             device_model="Desktop", system_version="Windows 10",
-            app_version="MySelf 1.0",
+            app_version="Star Self 1.0",
         )
         accounts.append((i, client))
 
@@ -119,6 +227,16 @@ async def main():
         tasks.append(asyncio.create_task(ticker()))
         tasks.append(client.run_until_disconnected())
 
+    # اکانت‌های مشتری‌های فروشگاه star self (فعال‌سازی ≤ ۲ دقیقه بعد از خرید)
+    pool = DynamicPool(cfg, store)
+    sync = None
+    if cfg.enc_key:
+        from shop_sync import ShopSync
+        sync = ShopSync(cfg, pool.start, pool.stop, dead_queue=pool.dead)
+        tasks.append(asyncio.create_task(sync.run()))
+    else:
+        log.info("SHOP_ENCRYPTION_KEY تنظیم نشده — اتصال به فروشگاه غیرفعال است")
+
     # GitHub Actions موقع پایان مهلت (timeout) سیگنال SIGTERM می‌فرستد؛
     # بدون این هندلر، پروسه بدون flush کشته می‌شد و آخرین تنظیمات گم می‌شد.
     stop_evt = asyncio.Event()
@@ -132,8 +250,19 @@ async def main():
     tasks.append(stop_task)
 
     try:
-        await asyncio.gather(*tasks)
+        # FIRST_COMPLETED: با SIGTERM (یا مرگ یک کلاینت) بقیه لغو و flush انجام شود —
+        # قبلاً gather بود و تا مرگ همه taskها منتظر می‌ماند (flush هرگز اجرا نمی‌شد)
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
     finally:
+        # flush قبل از قطع کلاینت‌ها — آپلود تلگرامی به کلاینت زنده نیاز دارد
+        try:
+            await store.flush()
+        except Exception:
+            pass
         try:
             for _, client in alive:
                 try:
@@ -142,7 +271,10 @@ async def main():
                     pass
         except Exception:
             pass
-        await store.flush()
+        try:
+            await pool.stop_all()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

@@ -60,6 +60,8 @@ def build(cfg, db):
     # ---------- انتقال سکه: مرحله ۱ ----------
     @r.callback_query(F.data == "cb_transfer")
     async def tr1(cb: CallbackQuery, state: FSMContext):
+        from handlers.common import abort_pending
+        await abort_pending(db, state, cb.from_user.id)  # خروج امن از جریان فعال‌سازی
         await state.set_state(Transfer.wait_to)
         await cb.message.answer(T.TRANSFER_1.format(
             min_t=await db.sint("min_transfer", 20),

@@ -66,7 +66,11 @@ class Ctx:
             return None
 
     def relay_chat(self):
-        """چت پیش‌فرض ذخیره: کانال storage یا پیام‌های ذخیره‌شده."""
+        """چت پیش‌فرض ذخیره/لاگ: اولویت = ست لاگ > کانال storage > پیام‌های ذخیره‌شده."""
+        lg = (self.acc.get("log") or {}).get("chat")
+        if lg:
+            s = str(lg)
+            return int(s) if s.lstrip("-").isdigit() else lg
         return self.store.cfg.storage_id or "me"
 
 

@@ -33,6 +33,14 @@ class Config:
         # فایل کش محلی
         self.db_file = os.getenv("DB_FILE", "data/db.json")
 
+        # اتصال به فروشگاه star self — سشن‌های مشتری‌ها (بدون کلید غیرفعال است)
+        self.enc_key = os.getenv("SHOP_ENCRYPTION_KEY", "").strip()
+        try:
+            self.shop_poll = max(15, int(os.getenv("SHOP_POLL", "60") or 60))
+        except ValueError:
+            self.shop_poll = 60
+        self.branch = (os.getenv("GITHUB_REF_NAME") or "main").strip() or "main"
+
     @staticmethod
     def _parse_chat(v):
         v = (v or "").strip()

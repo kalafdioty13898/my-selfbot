@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 
 import keyboards as K
 import texts as T
-from handlers.common import PENDING, maybe_dispatch, fire_and_forget
+from handlers.common import PENDING, BUSY, maybe_dispatch, fire_and_forget
 from utils import fmt_tom, PLAN_LABELS
 
 
@@ -105,18 +105,25 @@ def build(cfg, db):
             return await cb.message.answer(T.PLAN_NO_BAL.format(
                 label=label, coins=coins_needed, balance=bal),
                 reply_markup=K.need_coins())
+        if uid in BUSY:
+            await cb.answer("یک فعال‌سازی برای تو در جریان است؛ اول «لغو» بفرست.",
+                            show_alert=True)
+            return
+        BUSY.add(uid)
         await db.add_balance(uid, -coins_needed, "plan", f"خرید {label}")
         act = await db.active_of(uid)
         if act:
             # تمدید سلف موجود — نیازی به سشن جدید نیست
+            BUSY.discard(uid)
             new_exp = await db.extend(uid, days)
             fire_and_forget(maybe_dispatch(cfg))
             await cb.message.answer(T.PLAN_DONE.format(
-                label=label, expires=new_exp[:16]),
+                label=label, expires=(new_exp or "?")[:16]),
                 reply_markup=K.back_menu("menu"))
         else:
             # سشن ندارد → بعد از پرداخت، جریان ساخت سشن
-            PENDING[uid] = {"plan": plan, "days": days, "paid": True, "amount": coins_needed}
+            PENDING[uid] = {"plan": plan, "days": days, "paid": True,
+                            "amount": coins_needed}
             from handlers.common import Act
             await state.set_state(Act.phone)
             await cb.message.answer(T.SESSION_PHONE)

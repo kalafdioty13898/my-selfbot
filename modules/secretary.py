@@ -59,6 +59,17 @@ def setup(bot: Bot):
         ctx.store.save()
         await ctx.reply(event, "🧠 حالت هوشمند فعال شد (فقط پیام‌دهی جدید جواب می‌گیرند)")
 
+    @bot.cmd("منشی آنی روشن", "secnow", cat="منشی",
+             help="منشی آنی روشن — بلافاصله و همیشه به پیوی جواب بدهد (حتی وقتی آنلاینی)")
+    async def _now(event, ctx, args):
+        ctx.acc["sec"]["mode"] = "all"
+        ctx.acc["sec"]["on"] = True
+        ctx.store.save()
+        await ctx.reply(event,
+                        "⚡ حالت آنی فعال شد: هر پیام خصوصی فوری جواب می‌گیرد\n"
+                        f"⏳ فاصله جواب هر کاربر: {ctx.acc['sec']['cool']} دقیقه "
+                        "(تغییر: تنظیم زمان منشی 2)")
+
     @bot.cmd("منشی افلاین روشن", "secoffon", cat="منشی",
              help="منشی افلاین روشن — بعد از X دقیقه بی‌فعالیتی فعال شود")
     async def _offmode(event, ctx, args):

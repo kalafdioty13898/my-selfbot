@@ -11,18 +11,27 @@ from telethon.sessions import StringSession
 import keyboards as K
 import texts as T
 from crypto import enc
-from handlers.common import Act, CLIENTS, PENDING, maybe_dispatch, fire_and_forget, log
+from git_sync import push_db_snapshot
+from handlers.common import (Act, CLIENTS, PENDING, BUSY, maybe_dispatch,
+                             fire_and_forget, log)
 from utils import parse_phone, normalize_code, PLAN_LABELS
 
 
 def build(cfg, db):
     r = Router()
 
-    async def start_session_build(responder, state, uid, plan, days, paid):
-        """شروع جریان ساخت سشن؛ paid=True یعنی سکه کم شده و در خطا باید برگردد."""
-        PENDING[uid] = {"plan": plan, "days": days, "paid": paid}
+    async def start_session_build(responder, state, uid, plan, days, paid, amount=0):
+        """شروع جریان ساخت سشن؛ amount = مبلغ دقیق پرداختی برای بازگشت.
+        False یعنی جریان دیگری برای همین کاربر در جریان است."""
+        if uid in BUSY:
+            await responder(
+                "⏳ یک فعال‌سازی برای تو در جریان است؛ اول «لغو» بفرست یا صبر کن تمام شود.")
+            return False
+        BUSY.add(uid)
+        PENDING[uid] = {"plan": plan, "days": days, "paid": paid, "amount": int(amount or 0)}
         await state.set_state(Act.phone)
         await responder(T.SESSION_PHONE)
+        return True
 
     r.start_session_build = start_session_build
 
@@ -60,10 +69,15 @@ def build(cfg, db):
                                     reply_markup=K.need_coins())
             return await cb.answer()
         await db.add_balance(uid, -cost, "activate", "خرید سلف (فعال‌سازی)")
-        await cb.answer(f"🪙 {cost} سکه کم شد")
-        await start_session_build(cb.message.answer, state, uid, "coin_1d",
-                                  await db.sint("initial_days", 1), paid=True)
-        PENDING[uid]["amount"] = cost  # مبلغ دقیق پرداختی برای بازگشت در خطا/لغو
+        ok = await start_session_build(cb.message.answer, state, uid, "coin_1d",
+                                       await db.sint("initial_days", 1), paid=True,
+                                       amount=cost)
+        if ok:
+            await cb.answer(f"🪙 {cost} سکه کم شد")
+        else:
+            # جریان دیگری بود — سکه برگشت داده می‌شود
+            await db.add_balance(uid, cost, "refund", "جریان موازی فعال‌سازی")
+            await cb.answer("جریان فعال داری؛ سکه برگشت خورد", show_alert=True)
 
     # ---------- مراحل ساخت سشن ----------
     @r.message(Act.phone)
@@ -78,8 +92,8 @@ def build(cfg, db):
         try:
             client = TelegramClient(StringSession(), cfg.api_id, cfg.api_hash)
             await client.connect()
+            CLIENTS[uid] = client  # قبل از هر کار fail-شونده — تا leak نشود
             sent = await client.send_code_request(phone)
-            CLIENTS[uid] = client
             await state.update_data(phone=phone, code_hash=sent.phone_code_hash)
             await state.set_state(Act.code)
             await m.answer(T.SESSION_CODE)
@@ -98,7 +112,14 @@ def build(cfg, db):
         data = await state.get_data()
         client = CLIENTS.get(uid)
         if not client:
+            meta = PENDING.pop(uid, None)
+            BUSY.discard(uid)
             await state.clear()
+            if meta and meta.get("paid"):
+                cost = await _refund_amount(meta)
+                await db.add_balance(uid, cost, "refund", "انقضای جریان فعال‌سازی")
+                return await m.answer(
+                    f"⛔ جریان ساخت سشن منقضی شد؛ 🪙 {cost} سکه برگشت خورد. دوباره از «فعال‌سازی سلف» شروع کن.")
             return await m.answer("⛔ جریان ساخت سشن منقضی شد؛ دوباره از «فعال‌سازی سلف» شروع کن.")
         code = normalize_code(m.text)
         if not code:
@@ -133,7 +154,14 @@ def build(cfg, db):
             return await _cancel(m, state, uid)
         client = CLIENTS.get(uid)
         if not client:
+            meta = PENDING.pop(uid, None)
+            BUSY.discard(uid)
             await state.clear()
+            if meta and meta.get("paid"):
+                cost = await _refund_amount(meta)
+                await db.add_balance(uid, cost, "refund", "انقضای جریان فعال‌سازی")
+                return await m.answer(
+                    f"⛔ جریان ساخت سشن منقضی شد؛ 🪙 {cost} سکه برگشت خورد. دوباره از «فعال‌سازی سلف» شروع کن.")
             return await m.answer("⛔ جریان ساخت سشن منقضی شد؛ دوباره از «فعال‌سازی سلف» شروع کن.")
         try:
             await client.sign_in(password=(m.text or "").strip())
@@ -149,11 +177,16 @@ def build(cfg, db):
         phone = (await state.get_data()).get("phone", "")
         await cleanup(uid)
         await state.clear()
+        BUSY.discard(uid)
         meta = PENDING.pop(uid, None) or {"plan": "coin_1d",
                                           "days": await db.sint("initial_days", 1),
                                           "paid": False}
         note = await db.sget("admin_note", "")
-        await db.add_activation(uid, enc(session_str), phone, meta["plan"], meta["days"], note)
+        # شماره هم رمزنگاری می‌شود (دیتابیس در ریپوی عمومی است — PII نباید خام باشد)
+        await db.add_activation(uid, enc(session_str), enc(phone) if phone else "",
+                                meta["plan"], meta["days"], note)
+        # فعال‌سازی آنی: دیتابیس همین لحظه پوش می‌شود تا سلف ≤ ۲ دقیقه دیگر آنلاین شود
+        fire_and_forget(push_db_snapshot(db))
         fire_and_forget(maybe_dispatch(cfg))
         plan_label = PLAN_LABELS.get(meta["plan"], meta["plan"])
         # محاسبه تاریخ انقضا برای نمایش
@@ -162,6 +195,17 @@ def build(cfg, db):
         exp = (now() + timedelta(days=meta["days"])).strftime("%Y-%m-%d %H:%M")
         await m.answer(T.ACTIVATED.format(expires=exp, plan=plan_label, note=note),
                        reply_markup=K.back_menu("menu"))
+        bot = getattr(cfg, "bot", None)
+        if bot and cfg.admin_id:
+            async def _notify():
+                try:
+                    await bot.send_message(
+                        cfg.admin_id,
+                        T.ACT_ADMIN.format(uid=uid, plan=plan_label,
+                                           expires=exp))
+                except Exception:
+                    pass
+            fire_and_forget(_notify())
         log.info(f"activation created uid={uid} plan={meta['plan']} days={meta['days']}")
 
     async def _refund_amount(meta) -> int:
@@ -174,6 +218,7 @@ def build(cfg, db):
         meta = PENDING.pop(uid, None)
         await cleanup(uid)
         await state.clear()
+        BUSY.discard(uid)
         if meta and meta.get("paid"):
             cost = await _refund_amount(meta)
             await db.add_balance(uid, cost, "refund", "لغو فعال‌سازی")
@@ -185,6 +230,8 @@ def build(cfg, db):
     async def _fail(m: Message, state: FSMContext, uid: int, err: str):
         meta = PENDING.pop(uid, None)
         await state.clear()
+        BUSY.discard(uid)
+        await cleanup(uid)
         if meta and meta.get("paid"):
             cost = await _refund_amount(meta)
             await db.add_balance(uid, cost, "refund", "خطای فعال‌سازی")

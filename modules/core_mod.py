@@ -6,7 +6,7 @@
 import html as _html
 
 from framework import Bot
-from utils import chunk_text, now, to_jalali, tmp_path
+from utils import chunk_text, now, to_jalali, tmp_path, marked_id
 
 # ترتیب بخش‌های پنل + آیکون هر بخش (فقط بخش‌های موجود نشان داده می‌شوند)
 CATS = [
@@ -53,7 +53,7 @@ def setup(bot: Bot):
         menu = "\n".join(
             f"{NUMS[i]} {icon} <b>{cat}</b>  →  <code>پنل {i + 1}</code>"
             for i, (cat, icon) in enumerate(avail))
-        return ("🤖 <b>پنل سلف‌بوت شخصی</b>\n"
+        return ("⭐️ <b>پنل star self</b>\n"
                 f"👤 {_html.escape(ctx.me.first_name or '')}\n"
                 f"🆔 <code>{ctx.me_id}</code>  |  {uname}\n"
                 f"🕐 {n.strftime('%H:%M')}  |  📅 {jy}/{jm:02d}/{jd:02d}\n"
@@ -102,7 +102,7 @@ def setup(bot: Bot):
         if cat is None:
             return await ctx.reply(event,
                                    "❌ چنین بخشی پیدا نشد. فقط «پنل» بفرست تا منوی کامل بیاد.")
-        head = "🤖 <b>پنل سلف‌بوت شخصی</b>\n" + f"{'═' * 30}\n"
+        head = "⭐️ <b>پنل star self</b>\n" + f"{'═' * 30}\n"
         body = f"\n📘 <b>راهنمای {cat}</b>\n" + "\n\n".join(_block(h) for h in _sections()[cat])
         for part in chunk_text(head + body):
             await ctx.reply(event, part, parse_mode="html")
@@ -145,7 +145,9 @@ def setup(bot: Bot):
                 f"📝 بیوهای چرخشی: {len(acc['bios'])} ({'روشن' if acc['bios_on'] else 'خاموش'})"
                 f" | ⌚ ساعت بیو: {'روشن' if clk.get('bio_on') else 'خاموش'}\n"
                 f"🤖 منشی: {'✅' if acc['sec']['on'] else '❌'} (حالت {acc['sec']['mode']})\n"
-                f"🛡 آنتی‌حذف: {'✅' if acc['ad']['del'] else '❌'}")
+                f"🛡 آنتی‌حذف: {'✅' if acc['ad']['del'] else '❌'}\n"
+                f"📺 سیو چنل: {len(acc.get('chansave') or {})} چت\n"
+                f"📮 لاگ: {acc.get('log', {}).get('chat') or 'پیش‌فرض'}")
 
     @bot.cmd("وضعیت", "status", always=True, cat="عمومی", help="وضعیت — گزارش کامل سلف")
     async def _status(event, ctx, args):
@@ -179,6 +181,37 @@ def setup(bot: Bot):
         ctx.acc["off"]["all"] = False
         ctx.store.save()
         await ctx.reply(event, "🟢 سلف در همه‌جا روشن شد")
+
+    # ---------- ست لاگ (مقصد لاگ‌ها/ذخیره‌های خودکار) ----------
+    @bot.cmd("ست لاگ", "setlog", always=True, cat="عمومی",
+             help="ست لاگ [@چت | خاموش | تست] — مقصد همه لاگ‌ها و ذخیره‌های خودکار (بدون آرگومان = همین چت)")
+    async def _setlog(event, ctx, args):
+        a = (args or "").strip()
+        if a in ("خاموش", "off"):
+            ctx.acc["log"]["chat"] = None
+            ctx.store.save()
+            return await ctx.reply(event, "📮 لاگ برگشت به چت ذخیره‌سازی پیش‌فرض")
+        if a == "تست":
+            ok = await ctx.send(ctx.relay_chat(),
+                                "🧪 پیام تست لاگ — از این به بعد لاگ‌ها همین‌جا می‌آیند")
+            return await ctx.reply(event,
+                                   "✅ تست ارسال شد — همین‌جا چک کن" if ok
+                                   else "❌ ارسال نشد — دسترسی چت مقصد را چک کن")
+        if a:
+            try:
+                ent = await ctx.client.get_entity(
+                    int(a) if a.lstrip("-").isdigit() else (a if a.startswith("@") else "@" + a))
+                dest = marked_id(ent)
+            except Exception:
+                return await ctx.reply(event,
+                                       "❌ چت پیدا نشد! یوزرنیم/آیدی بده یا داخل خود چت دستور را بفرست")
+        else:
+            dest = str(event.chat_id)
+        ctx.acc["log"]["chat"] = dest
+        ctx.store.save()
+        await ctx.reply(event,
+                        f"📮 مقصد لاگ ست شد: {dest}\n"
+                        "🧪 تست: «ست لاگ تست» | برگشت: «ست لاگ خاموش»")
 
     # ---------- ریست ----------
     @bot.cmd("ریست سلف", "reset", cat="عمومی", help="ریست سلف — پاک کردن همه تنظیمات این اکانت")

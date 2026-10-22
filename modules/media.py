@@ -6,7 +6,7 @@ import os
 from telethon.tl import functions, types
 
 from framework import Bot
-from utils import human_size, tmp_path
+from utils import human_size, tmp_path, marked_id
 
 MAX_DL = 512 * 1024 * 1024  # سقف دانلود ۵۱۲ مگ
 
@@ -107,7 +107,7 @@ def setup(bot: Bot):
             try:
                 ent = await ctx.client.get_entity(
                     int(a) if a.lstrip("-").isdigit() else (a if a.startswith("@") else "@" + a))
-                dest = ("@" + ent.username) if getattr(ent, "username", None) else str(ent.id)
+                dest = marked_id(ent)
             except Exception:
                 return await ctx.reply(
                     event, "❌ مقصد پیدا نشد! یوزرنیم کانال رو درست بده (مثل @self_me_me)")
@@ -124,6 +124,78 @@ def setup(bot: Bot):
             "بدون ریپلی خودکار ذخیره می‌شود.\n"
             f"📬 مقصد: {d_txt}\n"
             "⛔ خاموش کردن: «ذخیره خودکار خاموش»")
+
+    # ---------- سیو چنل: فوروارد خودکار همه پست‌های یک کانال/چت ----------
+    @bot.cmd("سیو چنل", "chsave", cat="مدیا",
+             help="سیو چنل [@کانال | خاموش | لیست] — هر پست جدید این چت بدون ریپلی خودکار به پیام‌های ذخیره‌شده (یا مقصد دلخواه) فوروارد می‌شود")
+    async def _chsave(event, ctx, args):
+        a = (args or "").strip()
+        key = str(event.chat_id)
+        cs = ctx.acc.setdefault("chansave", {})
+        if a in ("خاموش", "off", "غیرفعال"):
+            if cs.pop(key, None) is None:
+                return await ctx.reply(event, "ℹ️ سیو چنل برای این چت روشن نبود")
+            ctx.store.save()
+            return await ctx.reply(event, "🔴 سیو چنل این چت خاموش شد")
+        if a in ("خاموش همه", "همه", "all"):
+            n = len(cs)
+            cs.clear()
+            ctx.store.save()
+            return await ctx.reply(event, f"🔴 سیو چنل همه چت‌ها خاموش شد ({n} مورد)")
+        if a in ("لیست", "list", "ها"):
+            if not cs:
+                return await ctx.reply(event, "ℹ️ هیچ چتی فعال نشده. داخل کانال بفرست: سیو چنل")
+            rows = [f"• چت <code>{_html.escape(k)}</code> → مقصد <code>{_html.escape(str(v))}</code>"
+                    for k, v in cs.items()]
+            return await ctx.reply(event, "📍 سیو چنل فعال:\n" + "\n".join(rows), parse_mode="html")
+        if a:
+            try:
+                ent = await ctx.client.get_entity(
+                    int(a) if a.lstrip("-").isdigit() else (a if a.startswith("@") else "@" + a))
+                dest = marked_id(ent)
+            except Exception:
+                return await ctx.reply(
+                    event, "❌ مقصد پیدا نشد! یوزرنیم کانال مقصد را بده (مثل @self_me_me)")
+        else:
+            dest = "relay"
+        cs[key] = dest
+        ctx.store.save()
+        d_txt = ("چت ذخیره‌سازی پیش‌فرض (ست لاگ / STORAGE_ID / پیام‌های ذخیره‌شده)"
+                 if dest == "relay" else dest)
+        await ctx.reply(
+            event,
+            "🟢 سیو چنل روشن شد!\n"
+            "📥 از این به بعد هر پست جدید این چت خودکار فوروارد می‌شود.\n"
+            f"📬 مقصد: {d_txt}\n"
+            "⛔ خاموش کردن: «سیو چنل خاموش»")
+
+    @bot.msg_hook
+    async def _chan_catch(event, ctx):
+        msg = event.message
+        if not msg or msg.out or msg.action:
+            return
+        cs = ctx.acc.get("chansave") or {}
+        dest = cs.get(str(event.chat_id))
+        if not dest:
+            return
+        dest_chat = ctx.relay_chat() if dest == "relay" else (
+            int(dest) if str(dest).lstrip("-").isdigit() else dest)
+        if str(dest_chat) == str(event.chat_id):
+            return  # مقصد همان چت است — حلقه نشود
+        try:
+            await ctx.client.forward_messages(dest_chat, event.chat_id, msg.id)
+        except Exception:
+            # محتوای محافظت‌شده/فوروارد مسدود → کپی دستی
+            try:
+                if msg.media:
+                    path = await msg.download_media(file=tmp_path("chan"))
+                    if path:
+                        await ctx.client.send_file(dest_chat, path)
+                        os.remove(path)
+                elif msg.raw_text:
+                    await ctx.client.send_message(dest_chat, msg.raw_text)
+            except Exception:
+                pass
 
     @bot.msg_hook
     async def _ttl_catch(event, ctx):

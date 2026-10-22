@@ -15,6 +15,8 @@ def build(cfg, db):
 
     @r.callback_query(F.data == "cb_buy")
     async def buy(cb: CallbackQuery, state: FSMContext):
+        from handlers.common import abort_pending
+        await abort_pending(db, state, cb.from_user.id)  # خروج امن از جریان فعال‌سازی
         if await db.pending_receipt_of(cb.from_user.id):
             await cb.answer(T.RECEIPT_DUP, show_alert=True)
             return

@@ -150,6 +150,25 @@ def tmp_path(ext):
     return os.path.join(d, f"{int(time.time() * 1000)}_{random.randint(100, 999)}.{ext}")
 
 
+def marked_id(ent):
+    """آیدی marked قابل‌استفاده‌ی پایدار برای ذخیره در تنظیمات.
+
+    id خام مثبت کانال‌ها بعد از ری‌استارت (کش خالی StringSession) resolve
+    نمی‌شود؛ فرم marked (-100...) یا @username همیشه کار می‌کند."""
+    un = getattr(ent, "username", None)
+    if un:
+        return "@" + un
+    try:
+        from telethon.tl import types as tl
+        if isinstance(ent, tl.Channel):
+            return f"-100{ent.id}"
+        if isinstance(ent, tl.Chat):
+            return f"-{ent.id}"
+    except Exception:
+        pass
+    return str(getattr(ent, "id", ent))
+
+
 def human_size(n):
     for u in ["B", "KB", "MB", "GB"]:
         if n < 1024:

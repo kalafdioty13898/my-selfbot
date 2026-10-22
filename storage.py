@@ -26,6 +26,8 @@ def default_account():
         "quick": {},
         "ad": {"del": True, "edit": True, "ttl": True, "relay": None},
         "autosave": {},
+        "chansave": {},
+        "log": {"chat": None},
         "welcome": {},
         "lock": {},
         "mute": {},

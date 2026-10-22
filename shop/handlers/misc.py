@@ -66,6 +66,8 @@ def build(cfg, db):
     # ---------- پشتیبانی ----------
     @r.callback_query(F.data == "cb_support")
     async def support(cb: CallbackQuery, state: FSMContext):
+        from handlers.common import abort_pending
+        await abort_pending(db, state, cb.from_user.id)  # خروج امن از جریان فعال‌سازی
         await state.set_state(Support.wait)
         await cb.message.answer(T.SUPPORT, reply_markup=K.support_kb())
         await cb.answer()

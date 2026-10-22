@@ -47,6 +47,8 @@ jobs:
       - name: Commit DB state
         if: always()
         run: |
+          # WAL را داخل فایل اصلی ادغام کن تا star.db کامیت‌شده کامل و مستقل باشد
+          python -c "import sqlite3; c=sqlite3.connect('shop/data/star.db'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()" || true
           git config user.name "star-shop-bot"
           git config user.email "actions@users.noreply.github.com"
           git add shop/data/star.db || true

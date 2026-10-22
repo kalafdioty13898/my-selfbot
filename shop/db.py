@@ -269,10 +269,12 @@ class DB:
         return await cur.fetchone()
 
     async def decide_receipt(self, rid: int, status: str):
-        await self.conn.execute(
-            "UPDATE receipts SET status=?, decided_at=? WHERE id=?",
+        """اتمیک: فقط از وضعیت pending عبور کند؛ rowcount=0 یعنی قبلاً بررسی شده."""
+        cur = await self.conn.execute(
+            "UPDATE receipts SET status=?, decided_at=? WHERE id=? AND status='pending'",
             (status, now().strftime(FMT), rid))
         await self.conn.commit()
+        return cur.rowcount or 0
 
     # ---------- activations ----------
     async def add_activation(self, uid, session_enc, phone, plan, days, note="") -> int:

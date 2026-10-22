@@ -50,6 +50,11 @@ async def maintenance_loop(db: DB, bot: Bot, cfg: Config):
                     continue
                 await db.add_balance(uid, -renew_cost, "renew", "تمدید خودکار روزانه")
                 new_exp = await db.extend(uid, 1)
+                if not new_exp:
+                    # فعال‌سازی بین کوئری و تمدید حذف/منقضی شد — سکه برگردد
+                    await db.add_balance(uid, renew_cost, "renew_refund",
+                                         "تمدید ناموفق — برگشت سکه")
+                    continue
                 try:
                     await bot.send_message(uid, T.RENEW_AUTO.format(
                         cost=renew_cost, expires=new_exp[:16],
@@ -76,6 +81,7 @@ async def main():
     await db.init(cfg.admin_id)
 
     bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=None))
+    cfg.bot = bot  # برای نوتیف ادمین از داخل هندلرها (رسید خرید و ...)
     try:
         me = await bot.get_me()
         cfg.bot_username = me.username or cfg.bot_username

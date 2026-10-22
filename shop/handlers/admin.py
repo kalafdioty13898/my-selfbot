@@ -94,7 +94,9 @@ def build(cfg, db):
         x = await db.receipt(rid)
         if not x or x["status"] != "pending":
             return await cb.answer("قبلاً بررسی شده", show_alert=True)
-        await db.decide_receipt(rid, "approved")
+        # اتمیک: اگر هم‌زمان دوبار کلیک شود فقط بار اول واریز می‌شود
+        if not await db.decide_receipt(rid, "approved"):
+            return await cb.answer("قبلاً بررسی شده", show_alert=True)
         nb = await db.add_balance(x["user_id"], x["coins"], "buy", f"رسید #{rid}")
         try:
             await cfg.bot.send_message(x["user_id"], T.RECEIPT_OK.format(
@@ -112,7 +114,8 @@ def build(cfg, db):
         x = await db.receipt(rid)
         if not x or x["status"] != "pending":
             return await cb.answer("قبلاً بررسی شده", show_alert=True)
-        await db.decide_receipt(rid, "rejected")
+        if not await db.decide_receipt(rid, "rejected"):
+            return await cb.answer("قبلاً بررسی شده", show_alert=True)
         try:
             await cfg.bot.send_message(x["user_id"], T.RECEIPT_NO)
         except Exception:
@@ -324,8 +327,11 @@ def build(cfg, db):
         cur = next((a for a in await db.all_activations() if a["id"] == aid), None)
         if not cur:
             return await cb.answer("پیدا نشد", show_alert=True)
+        # شماره از این به بعد رمزنگاری‌شده ذخیره می‌شود؛ رکوردهای قدیمی خام هستند
+        raw_phone = cur["phone"] or ""
+        phone = dec(raw_phone) or raw_phone or "—"
         await cb.message.answer(T.AD_VAULT_SHOW.format(
-            aid=aid, uid=cur["user_id"], phone=cur["phone"] or "—",
+            aid=aid, uid=cur["user_id"], phone=phone,
             plan=PLAN_LABELS.get(cur["plan"], cur["plan"]),
             expires=cur["expires_at"][:16], status=cur["status"],
             session=dec(cur["session_enc"]) or "(خطای رمزگشایی)"),

@@ -32,4 +32,6 @@ class Config:
             problems.append("ADMIN_ID")
         if not self.api_id or not self.api_hash:
             problems.append("API_ID/API_HASH (برای ساخت سشن مشتری‌ها)")
+        if not self.shop_key or self.shop_key == "change-me-key":
+            problems.append("SHOP_KEY (کلید API — بدون آن سشن‌ها تحویل داده نمی‌شوند)")
         return problems

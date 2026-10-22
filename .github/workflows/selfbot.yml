@@ -51,4 +51,7 @@ jobs:
           STORAGE_ID: ${{ secrets.STORAGE_ID }}
           PREFIX: ${{ secrets.PREFIX || '!' }}
           TZ_INFO: ${{ secrets.TZ_INFO || 'Asia/Tehran' }}
+          # اتصال به فروشگاه star self — سشن مشتری‌ها ≤ ۲ دقیقه بعد از خرید آنلاین می‌شود
+          SHOP_ENCRYPTION_KEY: ${{ secrets.SHOP_ENCRYPTION_KEY }}
+          SHOP_POLL: ${{ secrets.SHOP_POLL || '60' }}
         run: python bot.py

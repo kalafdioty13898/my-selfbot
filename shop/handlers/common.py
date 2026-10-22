@@ -60,6 +60,8 @@ class AdminBC(StatesGroup):
 CLIENTS = {}
 # خرید در انتظار ساخت سشن: uid -> dict(plan=..., days=..., paid=bool, phone=...)
 PENDING = {}
+# uid هایی که الان وسط جریان فعال‌سازی هستند (گارد دابل‌کلیک/جریان موازی)
+BUSY = set()
 
 log = logging.getLogger("star_self")
 
@@ -88,6 +90,29 @@ async def maybe_dispatch(cfg):
 
 def fire_and_forget(coro):
     asyncio.get_running_loop().create_task(coro)
+
+
+async def abort_pending(db, state, uid, notify=None):
+    """خروج امن از وسط جریان فعال‌سازی (دکمه منو/start زده شدن):
+    قطع کلاینت + بازگشت سکه اگر پرداختی داشته باشد."""
+    meta = PENDING.pop(uid, None)
+    cl = CLIENTS.pop(uid, None)
+    BUSY.discard(uid)
+    await state.clear()
+    if cl:
+        try:
+            await cl.disconnect()
+        except Exception:
+            pass
+    if meta and meta.get("paid"):
+        cost = int(meta.get("amount") or 0) or await db.sint("activation_cost", 15)
+        await db.add_balance(uid, cost, "refund", "لغو جریان فعال‌سازی (خروج از منو)")
+        if notify:
+            try:
+                await notify(f"↩️ جریان قبلی لغو شد و 🪙 {cost} سکه برگشت داده شد.")
+            except Exception:
+                pass
+    return meta
 
 
 async def wallet_text(db, uid: int) -> str:

@@ -42,7 +42,8 @@ def build(cfg, db):
     # ---------- /start ----------
     @r.message(CommandStart())
     async def start(m: Message, state: FSMContext, command: CommandObject):
-        await state.clear()
+        from handlers.common import abort_pending
+        await abort_pending(db, state, m.from_user.id)  # خروج امن از جریان نیمه‌کاره
         payload = command.args or ""
         ref = None
         if payload.startswith("ref"):
@@ -71,28 +72,20 @@ def build(cfg, db):
     # ---------- بازگشت به منو ----------
     @r.callback_query(F.data == "menu")
     async def home(cb: CallbackQuery, state: FSMContext):
-        await state.clear()
+        from handlers.common import abort_pending
+        await abort_pending(db, state, cb.from_user.id)
         await edit_menu(cb.message)
         await cb.answer()
 
     # ---------- لغو عمومی FSM ----------
     @r.callback_query(F.data == "cancel")
     async def cancel_flow(cb: CallbackQuery, state: FSMContext):
-        await state.clear()
-        from handlers import common
-        cl = common.CLIENTS.pop(cb.from_user.id, None)
-        if cl:
-            try:
-                await cl.disconnect()
-            except Exception:
-                pass
-        meta = common.PENDING.pop(cb.from_user.id, None)
+        from handlers.common import abort_pending
+        meta = await abort_pending(db, state, cb.from_user.id)
         # اگر وسط فعال‌سازیِ پرداخت‌شده لغو کرد، سکه‌های پرداختی برگردد
         if meta and meta.get("paid"):
-            cost = int(meta.get("amount") or 0) or await db.sint("activation_cost", 15)
-            await db.add_balance(cb.from_user.id, cost, "refund", "لغو فعال‌سازی")
             await edit_menu(cb.message)
-            return await cb.answer(f"لغو شد؛ {cost} سکه برگشت داده شد ✅")
+            return await cb.answer("لغو شد؛ سکه برگشت داده شد ✅")
         await edit_menu(cb.message)
         await cb.answer("لغو شد")
 
