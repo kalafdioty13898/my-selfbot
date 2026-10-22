@@ -12,7 +12,7 @@ import keyboards as K
 import texts as T
 from crypto import enc
 from handlers.common import Act, CLIENTS, PENDING, maybe_dispatch, fire_and_forget, log
-from utils import parse_phone, PLAN_LABELS
+from utils import parse_phone, normalize_code, PLAN_LABELS
 
 
 def build(cfg, db):
@@ -63,6 +63,7 @@ def build(cfg, db):
         await cb.answer(f"🪙 {cost} سکه کم شد")
         await start_session_build(cb.message.answer, state, uid, "coin_1d",
                                   await db.sint("initial_days", 1), paid=True)
+        PENDING[uid]["amount"] = cost  # مبلغ دقیق پرداختی برای بازگشت در خطا/لغو
 
     # ---------- مراحل ساخت سشن ----------
     @r.message(Act.phone)
@@ -99,7 +100,9 @@ def build(cfg, db):
         if not client:
             await state.clear()
             return await m.answer("⛔ جریان ساخت سشن منقضی شد؛ دوباره از «فعال‌سازی سلف» شروع کن.")
-        code = (m.text or "").strip()
+        code = normalize_code(m.text)
+        if not code:
+            return await m.answer(T.SESSION_ERR_CODE)
         try:
             await client.sign_in(phone=data["phone"], code=code,
                                  phone_code_hash=data.get("code_hash"))
@@ -107,7 +110,17 @@ def build(cfg, db):
         except errors.SessionPasswordNeededError:
             await state.set_state(Act.password)
             await m.answer(T.SESSION_PASS)
-        except (errors.PhoneCodeInvalidError, errors.PhoneCodeExpiredError):
+        except errors.PhoneCodeExpiredError:
+            # کد منقضی → خودکار کد جدید بفرست تا کاربر گیر نکنه
+            try:
+                sent = await client.send_code_request(data["phone"])
+                await state.update_data(code_hash=sent.phone_code_hash)
+                await m.answer("⏳ کد قبلی منقضی شده بود؛ کد جدید فرستادیم — همونو بفرست.")
+            except errors.FloodWaitError as e:
+                await m.answer(f"⏳ تلگرام محدودیت زمانی گذاشته؛ {e.seconds} ثانیه دیگر تلاش کن.")
+            except Exception:
+                await m.answer(T.SESSION_ERR_CODE)
+        except errors.PhoneCodeInvalidError:
             await m.answer(T.SESSION_ERR_CODE)
         except Exception as e:
             await cleanup(uid)
@@ -151,12 +164,18 @@ def build(cfg, db):
                        reply_markup=K.back_menu("menu"))
         log.info(f"activation created uid={uid} plan={meta['plan']} days={meta['days']}")
 
+    async def _refund_amount(meta) -> int:
+        """مبلغ دقیق پرداختی کاربر (پلن یا فعال‌سازی) برای بازگشت."""
+        if meta and meta.get("amount"):
+            return int(meta["amount"])
+        return await db.sint("activation_cost", 15)
+
     async def _cancel(m: Message, state: FSMContext, uid: int):
         meta = PENDING.pop(uid, None)
         await cleanup(uid)
         await state.clear()
         if meta and meta.get("paid"):
-            cost = await db.sint("activation_cost", 15)
+            cost = await _refund_amount(meta)
             await db.add_balance(uid, cost, "refund", "لغو فعال‌سازی")
             await m.answer(f"❌ لغو شد؛ 🪙 {cost} سکه برگشت داده شد.",
                            reply_markup=K.back_menu("menu"))
@@ -166,8 +185,8 @@ def build(cfg, db):
     async def _fail(m: Message, state: FSMContext, uid: int, err: str):
         meta = PENDING.pop(uid, None)
         await state.clear()
-        cost = await db.sint("activation_cost", 15)
         if meta and meta.get("paid"):
+            cost = await _refund_amount(meta)
             await db.add_balance(uid, cost, "refund", "خطای فعال‌سازی")
             await m.answer(T.SESSION_FAIL.format(err=err, cost=cost),
                            reply_markup=K.back_menu("menu"))

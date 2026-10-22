@@ -86,7 +86,13 @@ def build(cfg, db):
                 await cl.disconnect()
             except Exception:
                 pass
-        common.PENDING.pop(cb.from_user.id, None)
+        meta = common.PENDING.pop(cb.from_user.id, None)
+        # اگر وسط فعال‌سازیِ پرداخت‌شده لغو کرد، سکه‌های پرداختی برگردد
+        if meta and meta.get("paid"):
+            cost = int(meta.get("amount") or 0) or await db.sint("activation_cost", 15)
+            await db.add_balance(cb.from_user.id, cost, "refund", "لغو فعال‌سازی")
+            await edit_menu(cb.message)
+            return await cb.answer(f"لغو شد؛ {cost} سکه برگشت داده شد ✅")
         await edit_menu(cb.message)
         await cb.answer("لغو شد")
 

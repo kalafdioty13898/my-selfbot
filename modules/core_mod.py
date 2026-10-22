@@ -68,7 +68,7 @@ def setup(bot: Bot):
         cap = _menu_text(ctx)
         path = None
         try:
-            path = await ctx.client.download_profile_media(ctx.me, file=tmp_path("jpg"))
+            path = await ctx.client.download_profile_photo(ctx.me, file=tmp_path("jpg"))
         except Exception:
             path = None
         if path:
@@ -119,8 +119,11 @@ def setup(bot: Bot):
     @bot.cmd("پینگ", "ping", always=True, cat="عمومی", help="پینگ — سرعت پاسخ ربات")
     async def _ping(event, ctx, args):
         import time as t
+        t0 = t.time()
         m = await ctx.reply(event, "⚡ ...")
-        ms = int((t.time() - (m.date.timestamp() if m and m.date else t.time())) * 1000)
+        if not m:
+            return
+        ms = int((t.time() - (m.date.timestamp() if m.date else t0)) * 1000)
         up = int(t.time() - ctx.started)
         await ctx.client.edit_message(event.chat_id, m.id,
                                       f"⚡ پینگ: {ms}ms | ⏱ فعال از {up // 3600}س {up % 3600 // 60}د")

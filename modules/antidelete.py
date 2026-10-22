@@ -19,14 +19,15 @@ MEDIA_KEEP = 15 * 1024 * 1024  # مدیای تا ۱۵ مگ برای بازیاب
 
 
 def setup(bot: Bot):
-    cache = OrderedDict()  # msg_id -> dict(chat, text, path, sender)
+    cache = OrderedDict()  # (chat_id, msg_id) -> dict(chat, text, path, sender)
 
     async def remember(msg, event):
         if not msg:
             return
         try:
-            if msg.id in cache:
-                cache.move_to_end(msg.id)
+            key = (event.chat_id, msg.id)  # آیدی پیام در چت‌ها تکراری است — کلید باید دوتایی باشد
+            if key in cache:
+                cache.move_to_end(key)
             item = {"chat": event.chat_id, "text": msg.raw_text or "",
                     "path": None, "sender": msg.sender_id,
                     "title": getattr(event.chat, "title", None),
@@ -40,7 +41,7 @@ def setup(bot: Bot):
                         item["path"] = await msg.download_media(file=tmp_path("ad"))
                     except Exception:
                         pass
-            cache[msg.id] = item
+            cache[key] = item
             while len(cache) > CACHE_MAX:
                 _, old = cache.popitem(last=False)
                 if old.get("path"):
@@ -89,7 +90,7 @@ def setup(bot: Bot):
             return "mention"
         rt = item.get("reply_to")
         if rt:
-            t = cache.get(rt)
+            t = cache.get((item.get("chat"), rt))
             if t and t.get("sender") == me_id:
                 return "reply"
         return None
@@ -153,14 +154,26 @@ def setup(bot: Bot):
     async def _cache_msg(event, ctx):
         await remember(event.message, event)
 
+    def _pop_cached(cid, i):
+        """آیتم کش را با کلید دوتایی بردار؛ اگر chat_id نامعلوم بود، با msg.id بگرد."""
+        if cid is not None:
+            item = cache.pop((cid, i), None)
+            if item:
+                return item
+        for key in list(cache.keys()):
+            if key[1] == i:
+                return cache.pop(key)
+        return None
+
     @bot.delete_hook
     async def _on_delete(event, ctx):
         if not ctx.acc["ad"]["del"]:
             return
         ids = event.deleted_ids or []
+        cid = getattr(event, "chat_id", None)
         found = []
         for i in ids:
-            item = cache.pop(i, None)
+            item = _pop_cached(cid, i)
             if item:
                 found.append(item)
         if not found:
@@ -191,7 +204,7 @@ def setup(bot: Bot):
         if not ctx.acc["ad"]["edit"]:
             return
         msg = event.message
-        old = cache.get(msg.id)
+        old = cache.get((getattr(event, "chat_id", None), msg.id))
         if not old:
             return
         new_text = msg.raw_text or ""

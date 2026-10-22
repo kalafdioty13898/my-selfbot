@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """ابزارهای کوچک مشترک."""
 import html
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -60,6 +61,25 @@ def parse_phone(v: str):
     if not body.isdigit() or not (8 <= len(body) <= 15):
         return None
     return v
+
+
+def normalize_code(v: str):
+    """استخراج کد ورود تلگرام از ورودی کاربر.
+
+    این‌ها همه باید کار کنند: «52941»، «۵۲۹۴۱»، «۵ ۲ ۹ ۴ ۱»، «5 2 9 4 1»،
+    «Login code: 52941» یا کل متن پیام تلگرام. ناموفق = None.
+    """
+    v = (str(v or "")).strip().translate(DIGITS)
+    groups = re.findall(r"\d+", v)
+    if not groups:
+        return None
+    if len(groups) == 1:
+        return groups[0]
+    # همه تک‌رقمی و حداقل ۴ تا → کد فاصله‌دار («5 2 9 4 1»)
+    if len(groups) >= 4 and all(len(g) == 1 for g in groups):
+        return "".join(groups)
+    cand = [g for g in groups if 4 <= len(g) <= 7]
+    return cand[-1] if cand else None
 
 
 def naive_now():

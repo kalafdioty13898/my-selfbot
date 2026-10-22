@@ -43,6 +43,10 @@ def build(cfg, db):
     @r.callback_query(F.data == "buy_card", Buy.wait_method)
     async def buy_card(cb: CallbackQuery, state: FSMContext):
         data = await state.get_data()
+        if not data.get("toman") or not data.get("coins"):
+            await state.set_state(Buy.wait_amount)
+            await cb.message.answer("⌛ مدت‌ زمان گذشته؛ دوباره بگو چند سکه می‌خری (عدد بفرست).")
+            return await cb.answer()
         await state.set_state(Buy.wait_receipt)
         await cb.message.answer(T.RECEIPT.format(
             toman=fmt_tom(data["toman"]), coins=data["coins"],
@@ -64,6 +68,9 @@ def build(cfg, db):
 
     async def save_receipt(m: Message, state: FSMContext, file_id: str, ftype: str):
         data = await state.get_data()
+        if not data.get("coins") or not data.get("toman"):
+            await state.set_state(Buy.wait_amount)
+            return await m.answer("⌛ جریان خرید منقضی شد؛ دوباره بگو چند سکه می‌خری (عدد بفرست).")
         rid = await db.add_receipt(m.from_user.id, data["coins"], data["toman"], file_id, ftype)
         await state.clear()
         # اطلاع به ادمین

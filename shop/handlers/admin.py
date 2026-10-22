@@ -267,6 +267,7 @@ def build(cfg, db):
         return enc(s)
 
     # ---------- گیت‌واوت ----------
+    # ⚠️ ترتیب مهم: var_/vax_/vas_ باید قبل از va_ باشند وگرنه va_ آن‌ها را قورت می‌دهد
     @r.callback_query(F.data.in_({"ad_vault", "ad_vault0"}))
     async def ad_vault(cb: CallbackQuery):
         if not await guard(cb):
@@ -281,34 +282,7 @@ def build(cfg, db):
         await show_vault(cb.message, parse_int(cb.data[3:]) or 0)
         await cb.answer()
 
-    async def show_vault(msg, page: int):
-        rows = await db.all_activations()
-        n = len(rows)
-        if n == 0:
-            return await msg.answer(T.AD_VAULT_EMPTY, reply_markup=K.admin_back())
-        pages = (n + PAGE_SIZE - 1) // PAGE_SIZE
-        page = max(0, min(page, pages - 1))
-        chunk = rows[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
-        await msg.answer(T.AD_VAULT_HEAD.format(n=n, page=page + 1, pages=pages),
-                         reply_markup=K.vault_kb(chunk, page, pages))
-
-    @r.callback_query(F.data.startswith("va_"))
-    async def vault_item(cb: CallbackQuery):
-        if not await guard(cb):
-            return
-        aid = parse_int(cb.data[3:])
-        cur = next((a for a in await db.all_activations() if a["id"] == aid), None)
-        if not cur:
-            return await cb.answer("پیدا نشد", show_alert=True)
-        await cb.message.answer(T.AD_VAULT_SHOW.format(
-            aid=aid, uid=cur["user_id"], phone=cur["phone"] or "—",
-            plan=PLAN_LABELS.get(cur["plan"], cur["plan"]),
-            expires=cur["expires_at"][:16], status=cur["status"],
-            session=dec(cur["session_enc"]) or "(خطای رمزگشایی)"),
-            reply_markup=K.vault_item_kb(aid))
-        await cb.answer()
-
-    @r.callback_query(F.data.startswith("var_"))
+    @r.callback_query(F.data.regexp(r"^var_\d+$"))
     async def vault_revoke(cb: CallbackQuery):
         if not await guard(cb):
             return
@@ -324,13 +298,49 @@ def build(cfg, db):
         else:
             await cb.answer("پیدا نشد", show_alert=True)
 
-    @r.callback_query(F.data.startswith("vax_"))
+    @r.callback_query(F.data.regexp(r"^vax_\d+$"))
     async def vault_delete(cb: CallbackQuery):
         if not await guard(cb):
             return
         aid = parse_int(cb.data[4:])
         await db.revoke(aid)  # حذف منطقی
         await cb.answer("حذف (منطقی) شد", show_alert=True)
+
+    @r.callback_query(F.data.regexp(r"^vas_\d+$"))
+    async def vault_show_again(cb: CallbackQuery):
+        if not await guard(cb):
+            return
+        await _show_item(cb, parse_int(cb.data[4:]))
+        await cb.answer()
+
+    @r.callback_query(F.data.regexp(r"^va_\d+$"))
+    async def vault_item(cb: CallbackQuery):
+        if not await guard(cb):
+            return
+        await _show_item(cb, parse_int(cb.data[3:]))
+        await cb.answer()
+
+    async def _show_item(cb: CallbackQuery, aid: int):
+        cur = next((a for a in await db.all_activations() if a["id"] == aid), None)
+        if not cur:
+            return await cb.answer("پیدا نشد", show_alert=True)
+        await cb.message.answer(T.AD_VAULT_SHOW.format(
+            aid=aid, uid=cur["user_id"], phone=cur["phone"] or "—",
+            plan=PLAN_LABELS.get(cur["plan"], cur["plan"]),
+            expires=cur["expires_at"][:16], status=cur["status"],
+            session=dec(cur["session_enc"]) or "(خطای رمزگشایی)"),
+            reply_markup=K.vault_item_kb(aid))
+
+    async def show_vault(msg, page: int):
+        rows = await db.all_activations()
+        n = len(rows)
+        if n == 0:
+            return await msg.answer(T.AD_VAULT_EMPTY, reply_markup=K.admin_back())
+        pages = (n + PAGE_SIZE - 1) // PAGE_SIZE
+        page = max(0, min(page, pages - 1))
+        chunk = rows[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+        await msg.answer(T.AD_VAULT_HEAD.format(n=n, page=page + 1, pages=pages),
+                         reply_markup=K.vault_kb(chunk, page, pages))
 
     # ---------- کیف پول ادمین ----------
     @r.callback_query(F.data == "ad_wallet")

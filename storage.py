@@ -9,6 +9,8 @@ import os
 import time
 import zlib
 
+from telethon.tl.types import InputMessagesFilterPinned
+
 MARK = "≡SFB-DB≡"
 SAVE_DEBOUNCE = 8  # ثانیه
 
@@ -45,6 +47,7 @@ class Store:
         self.index_id = None
         self._last = 0.0
         self._dirty = False
+        self._lock = asyncio.Lock()  # جلوگیری از تداخل ذخیره‌های همزمان
 
     def acc(self, key):
         a = self.data["accounts"].setdefault(str(key), default_account())
@@ -88,27 +91,51 @@ class Store:
             pass
 
     async def _load_tg(self):
+        """ایندکس را اول بین پیام‌های پین‌شده، بعد بین ۲۰۰ پیام اخیر بگرد.
+        (قبلاً فقط ۳۰ پیام آخر اسکن می‌شد و اگر مدیای ریلی‌شده روی ایندکس را
+        دفن می‌کرد، کل تنظیمات گم می‌شد.)"""
         chat = self.cfg.storage_id
         try:
-            async for m in self.client.iter_messages(chat, limit=30):
+            # ۱) ایندکس پین‌شده (حالت معمول)
+            async for m in self.client.iter_messages(chat, limit=5,
+                                                     filter=InputMessagesFilterPinned):
                 if m.raw_text and m.raw_text.startswith(MARK):
-                    meta = json.loads(m.raw_text[len(MARK):])
-                    ids = meta.get("ids", [])
-                    self.index_id = m.id
-                    if not ids:
-                        return {"accounts": {}}
-                    msgs = await self.client.get_messages(chat, ids=ids)
-                    by_id = {mm.id: mm for mm in msgs if mm}
-                    blob = "".join((by_id[i].raw_text or "") for i in ids if i in by_id)
-                    blob = blob.strip()
-                    if not blob:
-                        return {"accounts": {}}
-                    data = json.loads(zlib.decompress(base64.b64decode(blob)).decode("utf-8"))
-                    self.chunk_ids = list(ids)
-                    return data
+                    data = await self._parse_index(chat, m)
+                    if data is not None:
+                        return data
+            # ۲) جستجوی عمیق‌تر
+            async for m in self.client.iter_messages(chat, limit=200):
+                if m.raw_text and m.raw_text.startswith(MARK):
+                    data = await self._parse_index(chat, m)
+                    if data is not None:
+                        return data
         except Exception:
             pass
         return None
+
+    async def _parse_index(self, chat, m):
+        """از روی پیام ایندکس، دیتابیس را بریز؛ خرابی = None."""
+        try:
+            meta = json.loads(m.raw_text[len(MARK):])
+            ids = meta.get("ids", [])
+            self.index_id = m.id
+            if not ids:
+                return {"accounts": {}}
+            # get_messages را دسته‌ای بزن (بالای ~۱۰۰ آیدی قابل اعتماد نیست)
+            by_id = {}
+            for i in range(0, len(ids), 100):
+                batch = ids[i:i + 100]
+                msgs = await self.client.get_messages(chat, ids=batch)
+                by_id.update({mm.id: mm for mm in msgs if mm})
+            blob = "".join((by_id[i].raw_text or "") for i in ids if i in by_id)
+            blob = blob.strip()
+            if not blob:
+                return {"accounts": {}}
+            data = json.loads(zlib.decompress(base64.b64decode(blob)).decode("utf-8"))
+            self.chunk_ids = list(ids)
+            return data
+        except Exception:
+            return None
 
     # ---------- save ----------
     def save(self, force=False):
@@ -124,16 +151,21 @@ class Store:
         if force or time.time() - self._last >= SAVE_DEBOUNCE:
             self._last = time.time()
             self._dirty = False
-            loop.create_task(self._save_now())
+            loop.create_task(self._locked_save())
         else:
             loop.create_task(self._delayed_save())
+
+    async def _locked_save(self):
+        # ذخیره‌های هم‌زمان را سریالی کن تا چانک‌ها خراب نشوند
+        async with self._lock:
+            await self._save_now()
 
     async def _delayed_save(self):
         await asyncio.sleep(SAVE_DEBOUNCE)
         if self._dirty:
             self._dirty = False
             self._last = time.time()
-            await self._save_now()
+            await self._locked_save()
 
     async def _save_now(self):
         self._write_local()
@@ -186,6 +218,5 @@ class Store:
 
     async def flush(self):
         """ذخیره اجباری در پایان کار."""
-        if self._dirty or True:
-            self._last = 0
+        async with self._lock:
             await self._save_now()

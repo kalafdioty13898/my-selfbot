@@ -116,7 +116,7 @@ def build(cfg, db):
                 reply_markup=K.back_menu("menu"))
         else:
             # سشن ندارد → بعد از پرداخت، جریان ساخت سشن
-            PENDING[uid] = {"plan": plan, "days": days, "paid": True}
+            PENDING[uid] = {"plan": plan, "days": days, "paid": True, "amount": coins_needed}
             from handlers.common import Act
             await state.set_state(Act.phone)
             await cb.message.answer(T.SESSION_PHONE)

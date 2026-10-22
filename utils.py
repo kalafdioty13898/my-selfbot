@@ -87,13 +87,16 @@ def render_vars(text, tzname="Asia/Tehran", user=None):
 
 def match_cmd(text, alias, prefix):
     """اگر متن با دستور مطابقت داشت، آرگومان‌ها را برمی‌گرداند وگرنه None.
-    دستورهای انگلیسی (ASCII) با پیشوند مثل !save و فارسی بدون پیشوند مثل ذخیره."""
+    دستورهای انگلیسی (ASCII) با پیشوند مثل !save و فارسی بدون پیشوند مثل ذخیره.
+    مرز کلمه رعایت می‌شود: !onto دیگر با on تطبیق نمی‌کند."""
+    import re as _re
     if not text:
         return None
     if alias.isascii():
-        full = prefix + alias
-        if text.lower().startswith(full.lower()):
-            return text[len(full):].strip()
+        full = _re.escape((prefix + alias).lower())
+        m = _re.match(rf"{full}(?:\s+|$)", text.lower())
+        if m:
+            return text[m.end():].strip()
         return None
     if text == alias:
         return ""

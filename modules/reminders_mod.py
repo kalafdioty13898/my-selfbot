@@ -113,7 +113,7 @@ def setup(bot: Bot):
             mins = max(1, int(args.strip()))
         except ValueError:
             return await ctx.reply(event, "❗ عدد بده: حذف روشن 5")
-        ctx.acc["autodel"][_chat_key(event.chat_id)] = mins
+        ctx.acc["autodel"][str(event.chat_id)] = mins
         ctx.store.save()
         await ctx.reply(event, f"✅ پیام‌هایت در این چت بعد از {mins} دقیقه پاک می‌شوند")
 
@@ -123,8 +123,6 @@ def setup(bot: Bot):
         ctx.acc["autodel"].pop(str(event.chat_id), None)
         ctx.store.save()
         await ctx.reply(event, "✅ حذف خودکار این چت خاموش شد")
-
-    bot._chat_key = str  # noqa — برای استفاده داخلی
 
     @bot.out_hook
     async def _autodel_out(event, ctx):

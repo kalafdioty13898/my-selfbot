@@ -129,10 +129,8 @@ class Bot:
         from utils import match_cmd
         msg = event.message
         text = (msg.raw_text or "").strip()
-        if not text:
-            return
 
-        # هوک‌های پیام (کش، مدریشن، منشی، ...)
+        # هوک‌های پیام (کش، مدریشن، منشی، ...) — برای همه پیام‌ها حتی مدیای بدون متن
         for h in self.msg_hooks:
             try:
                 await h(event, ctx)
@@ -149,6 +147,10 @@ class Bot:
                     await h(event, ctx)
                 except Exception:
                     log.exception("out hook error")
+
+        # دستورها فقط متنی‌اند؛ مدیای بدون متن همین‌جا تمام می‌شود (بعد از هوک‌ها)
+        if not text:
+            return
 
         chat_id = event.chat_id
         acc = ctx.acc

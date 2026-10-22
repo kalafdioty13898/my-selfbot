@@ -116,14 +116,14 @@ def setup(bot: Bot):
             except Exception:
                 made = False
             if not made:
-                # جایگزین: gTTS برای زبان‌هایی که edge ندارد
+                # جایگزین: gTTS برای زبان‌هایی که edge ندارد (در ترد جدا تا حلقه بلاک نشود)
                 from gtts import gTTS
-                gTTS(text=text[:2800], lang=lang).save(mp3)
-            ogg = _to_ogg(mp3)
+                await asyncio.to_thread(lambda: gTTS(text=text[:2800], lang=lang).save(mp3))
+            ogg = await asyncio.to_thread(_to_ogg, mp3)
             if ogg:
                 await ctx.client.send_file(
                     event.chat_id, ogg,
-                    attributes=[types.DocumentAttributeAudio(_dur(ogg), voice=True)],
+                    attributes=[types.DocumentAttributeAudio(await asyncio.to_thread(_dur, ogg), voice=True)],
                     reply_to=src.id if (not args.strip() and event.is_reply) else None)
             else:
                 await ctx.client.send_file(

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import signal
 import sys
 
 from telethon import TelegramClient, events
@@ -118,9 +119,29 @@ async def main():
         tasks.append(asyncio.create_task(ticker()))
         tasks.append(client.run_until_disconnected())
 
+    # GitHub Actions موقع پایان مهلت (timeout) سیگنال SIGTERM می‌فرستد؛
+    # بدون این هندلر، پروسه بدون flush کشته می‌شد و آخرین تنظیمات گم می‌شد.
+    stop_evt = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_evt.set)
+        except (NotImplementedError, RuntimeError):
+            pass
+    stop_task = asyncio.create_task(stop_evt.wait())
+    tasks.append(stop_task)
+
     try:
         await asyncio.gather(*tasks)
     finally:
+        try:
+            for _, client in alive:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+        except Exception:
+            pass
         await store.flush()
 
 

@@ -18,6 +18,7 @@ def _chat_key(cid):
 
 def setup(bot: Bot):
     tag_active = {}  # chat_id -> bool
+    watch_state = {"n": 0}  # شمارنده تیک برای نرم‌کردن چک قفل‌ها
 
     # ================= قفل عنوان / عکس =================
     @bot.cmd("قفل عنوان روشن", "locktitle", cat="گروه",
@@ -59,6 +60,7 @@ def setup(bot: Bot):
             except Exception:
                 pass
         lock["photo_msg"] = photo_msg.id if photo_msg else None
+        lock["base_photo_id"] = getattr(photo, "id", None)  # عکس فعلی به‌عنوان مبنا
         lock["photo_on"] = True
         ctx.store.save()
         await ctx.reply(event, "🔒 عکس گروه قفل شد")
@@ -73,6 +75,12 @@ def setup(bot: Bot):
     @bot.tick_hook
     async def _watch_locks(ctx):
         locks = ctx.acc["lock"]
+        if not locks:
+            return
+        # هر تیک (۲۰ ثانیه) نه — هر ۱۰ تیک (~۳٫۳ دقیقه) یک‌بار؛ وگرنه فلود تلگرام می‌گیریم
+        watch_state["n"] += 1
+        if watch_state["n"] % 10 != 1:
+            return
         for cid, lock in list(locks.items()):
             try:
                 chat_id = int(cid)
