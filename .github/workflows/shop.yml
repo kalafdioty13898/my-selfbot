@@ -1,0 +1,62 @@
+name: Star Shop Bot
+
+on:
+  schedule:
+    - cron: "30 */5 * * *"   # هر ۵ ساعت (۳۰ دقیقه اختلاف با سلف) — ربات تا ۳۵۰ دقیقه فعال می‌ماند
+  workflow_dispatch:          # دکمه Run manually
+
+concurrency:
+  group: star-shop
+  cancel-in-progress: false   # ران بعدی در صف می‌ماند → پوشش تقریباً پیوسته
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write   # برای commit دیتابیس SQLite بین ران‌ها
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: shop/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r shop/requirements.txt
+
+      # اگر ران قبلی همین الان commit دیتابیس را پush کرده باشد، بگیرش
+      - name: Pull latest DB
+        run: git pull --rebase || true
+
+      - name: Run Shop Bot
+        working-directory: shop
+        env:
+          BOT_TOKEN: ${{ secrets.SHOP_BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.SHOP_ADMIN_ID }}
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          ENCRYPTION_KEY: ${{ secrets.SHOP_ENCRYPTION_KEY }}
+          SHOP_KEY: ${{ secrets.SHOP_KEY }}
+          PORT: "8080"
+        run: python bot.py
+
+      # دیتابیس (کاربران/سکه‌ها/سشن‌های رمزشده) بین ران‌ها با خود گیت ذخیره می‌شود
+      - name: Commit DB state
+        if: always()
+        run: |
+          git config user.name "star-shop-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add shop/data/star.db || true
+          if git diff --cached --quiet; then
+            echo "DB unchanged — nothing to commit"
+          else
+            git commit -m "shop: sync database"
+            for i in 1 2 3; do
+              git pull --rebase || true
+              if git push; then break; fi
+              sleep 5
+            done
+          fi

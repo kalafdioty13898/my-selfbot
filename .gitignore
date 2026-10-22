@@ -1,7 +1,8 @@
 __pycache__/
 *.pyc
-data/
+/data/
 tmp_dl/
 session_string.txt
 *.session
 .env
+shop/data/.secret.key

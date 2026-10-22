@@ -126,3 +126,19 @@ GitHub Actions هر ۵ ساعت ری‌استارت می‌شود؛ پس تنظ�
 | ربات جواب نمی‌دهد | `وضعیت` بزن؛ لاگ Actions را ببین؛ چک کن اکانت خاموش نشده (`سلف همگانی روشن`) |
 | ذخیره تنظیمات کار نمی‌کند | `STORAGE_ID` درست؟ اکانت عضو آن چت هست؟ |
 | تگ/پاکسازی خطای دسترسی | اول اکانتت را ادمین گروه کن |
+
+## 🛒 ربات فروشگاه «star self» (پوشه‌ی `shop/`)
+
+ربات رسمی BotFather که سلف می‌فروشد: منوی ۱۰گانه، کیف پول، انتقال سکه، خرید سکه با کارت‌به‌کارت + رسید، فعال‌سازی با ساخت سشن داخل چت، تعرفه، زیرمجموعه و پنل ادمین کامل. جزئیات در [`shop/README.md`](shop/README.md).
+
+**اجرا روی همین ریپو:** Secrets زیر را اضافه کن (Settings → Secrets and variables → Actions → New repository secret) و بعد workflow «Star Shop Bot» را Run کن:
+
+| Secret | مقدار |
+|--------|-------|
+| `SHOP_BOT_TOKEN` | توکن ربات از BotFather |
+| `SHOP_ADMIN_ID` | آیدی عددی ادمین |
+| `SHOP_ENCRYPTION_KEY` | کلید Fernet (یک بار بساز: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) |
+| `SHOP_KEY` | کلید API سشن‌ها (هر رشته تصادفی) |
+| `API_ID` / `API_HASH` | همان مال سلف (اگر از قبل داری، دوباره نگذار) |
+
+دیتابیس SQLite در `shop/data/star.db` بین ران‌ها با commit خودکار ذخیره می‌شود؛ سشن مشتری‌ها داخلش با Fernet رمز شده‌اند.
