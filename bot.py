@@ -225,7 +225,8 @@ async def main():
         log.info("اکانت #%d آماده است: %s (id=%s)", i,
                  (ctx.me.first_name or ""), ctx.me_id)
         tasks.append(asyncio.create_task(ticker()))
-        tasks.append(client.run_until_disconnected())
+        # ⚠️ پایتون ۳.۱۱+: asyncio.wait coroutine خام قبول نمی‌کند — باید Task باشد
+        tasks.append(asyncio.create_task(client.run_until_disconnected()))
 
     # اکانت‌های مشتری‌های فروشگاه star self (فعال‌سازی ≤ ۲ دقیقه بعد از خرید)
     pool = DynamicPool(cfg, store)
