@@ -11,6 +11,7 @@ from aiogram.fsm.context import FSMContext
 import keyboards as K
 import texts as T
 from crypto import dec
+from git_sync import push_db_snapshot
 from handlers.common import (AdminAdd, AdminAmt, AdminBC, AdminFind, AdminFJ,
                              AdminSet, maybe_dispatch, fire_and_forget, log)
 from utils import parse_int, fmt_tom, esc, PLAN_LABELS
@@ -181,6 +182,9 @@ def build(cfg, db):
         if action == "e":
             new_exp = await db.extend(uid, 7)
             if new_exp:
+                # پوش فوری — تا ShopSync سلفِ سمت سلف‌بات، انقضای تازه را ببیند
+                fire_and_forget(push_db_snapshot(db))
+                fire_and_forget(maybe_dispatch(cfg))
                 try:
                     await cfg.bot.send_message(uid, T.AD_NOTIFY_EXTEND.format(days=7, expires=new_exp[:16]))
                 except Exception:
@@ -191,6 +195,8 @@ def build(cfg, db):
             act = await db.active_of(uid)
             if act:
                 await db.revoke(act["id"])
+                # پوش فوری — تا سلفِ کاربر همان لحظه در سلف‌بات قطع شود
+                fire_and_forget(push_db_snapshot(db))
                 fire_and_forget(maybe_dispatch(cfg))
                 try:
                     await cfg.bot.send_message(uid, T.AD_NOTIFY_REVOKE)
@@ -254,6 +260,10 @@ def build(cfg, db):
         note = await db.sget("admin_note", "")
         await db.add_activation(uid, enc_session(s), "", "manual", days, note)
         await state.clear()
+        # ⚠️ فیکس باگ «فعال شد ولی فعال نیست»: بدون این پوش، سشن دستی فقط در
+        # دیتابیس محلی این ران می‌ماند؛ ShopSync سلف‌بات از گیت‌هاب می‌خواند و
+        # هرگز آن را نمی‌دید تا کامیت پایان ران (ساعت‌ها بعد)!
+        fire_and_forget(push_db_snapshot(db))
         fire_and_forget(maybe_dispatch(cfg))
         from utils import now as _now
         from datetime import timedelta as _td
@@ -292,6 +302,8 @@ def build(cfg, db):
         aid = parse_int(cb.data[4:])
         row = await db.revoke(aid)
         if row:
+            # پوش فوری — قطع سلف کاربر تا ~۲ دقیقه دیگر
+            fire_and_forget(push_db_snapshot(db))
             fire_and_forget(maybe_dispatch(cfg))
             try:
                 await cfg.bot.send_message(row["user_id"], T.AD_NOTIFY_REVOKE)
@@ -306,7 +318,11 @@ def build(cfg, db):
         if not await guard(cb):
             return
         aid = parse_int(cb.data[4:])
-        await db.revoke(aid)  # حذف منطقی
+        row = await db.revoke(aid)  # حذف منطقی
+        if row:
+            # پوش فوری — سلف کاربر در سلف‌بات هم قطع شود
+            fire_and_forget(push_db_snapshot(db))
+            fire_and_forget(maybe_dispatch(cfg))
         await cb.answer("حذف (منطقی) شد", show_alert=True)
 
     @r.callback_query(F.data.regexp(r"^vas_\d+$"))

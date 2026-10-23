@@ -8,7 +8,9 @@ from aiogram.fsm.context import FSMContext
 
 import keyboards as K
 import texts as T
-from handlers.common import PENDING, BUSY, maybe_dispatch, fire_and_forget
+from handlers.common import (BUSY, maybe_dispatch, fire_and_forget,
+                             start_session_build)
+from git_sync import push_db_snapshot
 from utils import fmt_tom, PLAN_LABELS
 
 
@@ -109,24 +111,27 @@ def build(cfg, db):
             await cb.answer("یک فعال‌سازی برای تو در جریان است؛ اول «لغو» بفرست.",
                             show_alert=True)
             return
-        BUSY.add(uid)
         await db.add_balance(uid, -coins_needed, "plan", f"خرید {label}")
         act = await db.active_of(uid)
         if act:
             # تمدید سلف موجود — نیازی به سشن جدید نیست
-            BUSY.discard(uid)
             new_exp = await db.extend(uid, days)
+            # پوش فوری — انقضای تازه باید به سلف‌بات برسد وگرنه اگر سلف منقضی
+            # شده بود، بعد از خرید هم ران نمی‌شد («خریدم ولی فعال نیست»)
+            fire_and_forget(push_db_snapshot(db))
             fire_and_forget(maybe_dispatch(cfg))
             await cb.message.answer(T.PLAN_DONE.format(
                 label=label, expires=(new_exp or "?")[:16]),
                 reply_markup=K.back_menu("menu"))
         else:
-            # سشن ندارد → بعد از پرداخت، جریان ساخت سشن
-            PENDING[uid] = {"plan": plan, "days": days, "paid": True,
-                            "amount": coins_needed}
-            from handlers.common import Act
-            await state.set_state(Act.phone)
-            await cb.message.answer(T.SESSION_PHONE)
+            # سشن ندارد → بعد از پرداخت، منوی انتخاب روش ورود (QR / شماره و کد)
+            ok = await start_session_build(
+                cb.message.answer, state, uid, plan, days, paid=True,
+                amount=coins_needed)
+            if not ok:
+                await db.add_balance(uid, coins_needed, "refund",
+                                     "خطای جریان فعال‌سازی (خرید پلن)")
+                await cb.message.answer("⛔ جریان دیگری فعال بود؛ 🪙 سکه‌ها برگشت خورد.")
         await cb.answer("پرداخت شد ✅")
 
     return r

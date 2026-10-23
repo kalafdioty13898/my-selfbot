@@ -20,9 +20,11 @@ class Buy(StatesGroup):
 
 
 class Act(StatesGroup):
+    method = State()    # انتخاب روش ورود: QR یا شماره و کد
     phone = State()
     code = State()
     password = State()
+    qr_wait = State()   # در انتظار اسکن QR
 
 
 class Support(StatesGroup):
@@ -62,6 +64,8 @@ CLIENTS = {}
 PENDING = {}
 # uid هایی که الان وسط جریان فعال‌سازی هستند (گارد دابل‌کلیک/جریان موازی)
 BUSY = set()
+# تسک‌های منتظرِ اسکن QR: uid -> asyncio.Task (برای لغو تمیز)
+QR_TASKS = {}
 
 log = logging.getLogger("star_self")
 
@@ -88,6 +92,23 @@ async def maybe_dispatch(cfg):
         log.warning("gh dispatch error: %s", e)
 
 
+async def start_session_build(responder, state, uid, plan, days, paid, amount=0):
+    """شروع مشترک جریان ساخت سشن (خرید سکه‌ای و پلن‌ها) — منوی انتخاب روش:
+    🟦 QR (بدون کد، immune به بلاک share تلگرام) یا 📱 شماره و کد.
+    False یعنی جریان دیگری برای همین کاربر در جریان است."""
+    import keyboards as K
+    import texts as T
+    if uid in BUSY:
+        await responder(
+            "⏳ یک فعال‌سازی برای تو در جریان است؛ اول «لغو» بفرست یا صبر کن تمام شود.")
+        return False
+    BUSY.add(uid)
+    PENDING[uid] = {"plan": plan, "days": days, "paid": paid, "amount": int(amount or 0)}
+    await state.set_state(Act.method)
+    await responder(T.CHOOSE_METHOD, reply_markup=K.act_method())
+    return True
+
+
 def fire_and_forget(coro):
     asyncio.get_running_loop().create_task(coro)
 
@@ -99,6 +120,10 @@ async def abort_pending(db, state, uid, notify=None):
     cl = CLIENTS.pop(uid, None)
     BUSY.discard(uid)
     await state.clear()
+    # تسک منتظرِ اسکن QR هم اگر هست لغو شود (خودش بی‌صدا خارج می‌شود)
+    t = QR_TASKS.pop(uid, None)
+    if t and not t.done():
+        t.cancel()
     if cl:
         try:
             await cl.disconnect()

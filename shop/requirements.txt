@@ -4,3 +4,4 @@ telethon==1.36.0
 cryptography>=42
 python-dotenv>=1.0
 tzdata
+qrcode[pil]>=7.4
