@@ -62,9 +62,9 @@ print("— ۳) کیبوردهای جدید")
 import keyboards as K  # noqa: E402
 mk = K.act_method()
 ok("act_method: ۴ دکمه", len(mk.inline_keyboard) == 4)
-ok("دکمه QR", mk.inline_keyboard[0][0].callback_data == "act_qr")
-ok("دکمه شماره", mk.inline_keyboard[1][0].callback_data == "act_phone_m")
-ok("دکمه SMS", mk.inline_keyboard[2][0].callback_data == "act_sms_m")
+ok("دکمه SMS اول", mk.inline_keyboard[0][0].callback_data == "act_sms_m")
+ok("دکمه QR", mk.inline_keyboard[1][0].callback_data == "act_qr")
+ok("دکمه شماره", mk.inline_keyboard[2][0].callback_data == "act_phone_m")
 ok("لغو", mk.inline_keyboard[3][0].callback_data == "cancel")
 rk = K.code_retry()
 ok("code_retry: SMS", rk.inline_keyboard[0][0].callback_data == "act_sms")
@@ -83,7 +83,8 @@ for t_name in ("CHOOSE_METHOD", "QR_STARTED", "QR_RENEWED", "QR_TIMEOUT",
                "CODE_BLOCKED", "SMS_SENT"):
     ok(f"متن {t_name} بدون **", "**" not in getattr(T, t_name))
 ok("CHOOSE_METHOD گزینه SMS دارد", "پیامکی" in T.CHOOSE_METHOD)
-ok("CHOOSE_METHOD توضیح یک‌گوشی QR", "دومی لازم نیست" in T.CHOOSE_METHOD)
+ok("CHOOSE_METHOD توضیح درست QR (صفحه دوم)",
+   "صفحه دوم" in T.CHOOSE_METHOD and "دومی لازم نیست" not in T.CHOOSE_METHOD)
 ok("CODE_FORWARD وجود دارد", "فوروارد" in getattr(T, "CODE_FORWARD", "")
    and "باطل" in T.CODE_FORWARD)
 ok("ERR_PHONE_UNOCCUPIED", "ثبت نشده" in getattr(T, "ERR_PHONE_UNOCCUPIED", ""))
