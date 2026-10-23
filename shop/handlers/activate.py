@@ -105,7 +105,8 @@ def build(cfg, db):
             await cb.answer("جریان فعال داری؛ سکه برگشت خورد", show_alert=True)
 
     # ---------- انتخاب روش ورود ----------
-    @r.callback_query(F.data.in_({"act_phone_m", "act_phone_m2"}))
+    @r.callback_query(F.data.in_({"act_phone_m", "act_phone_m2",
+                                  "act_sms_m", "act_sms_m2"}))
     async def act_phone_method(cb: CallbackQuery, state: FSMContext):
         uid = cb.from_user.id
         if uid not in PENDING:
@@ -119,6 +120,8 @@ def build(cfg, db):
         if t and not t.done():
             t.cancel()
         await cleanup(uid)
+        # کد پیامکی (SMS) خارج از تلگرام می‌آید → کلاس مشکل «کد share شده» ندارد
+        await state.update_data(force_sms=cb.data.startswith("act_sms"))
         await state.set_state(Act.phone)
         await cb.message.answer(T.SESSION_PHONE)
         await cb.answer()
@@ -183,21 +186,35 @@ def build(cfg, db):
         if not phone:
             return await m.answer(T.SESSION_ERR_PHONE)
         await cleanup(uid)
+        sms = bool((await state.get_data()).get("force_sms"))
         try:
             client = TelegramClient(StringSession(), cfg.api_id, cfg.api_hash, **DEVICE)
             await client.connect()
             CLIENTS[uid] = client  # قبل از هر کار fail-شونده — تا leak نشود
-            sent = await client.send_code_request(phone)
+            sent = await client.send_code_request(phone, force_sms=sms)
             await state.update_data(phone=phone, code_hash=sent.phone_code_hash,
                                     attempts=0)
             await state.set_state(Act.code)
-            await m.answer(T.SESSION_CODE)
+            await m.answer(T.SMS_SENT if sms else T.SESSION_CODE)
         except errors.FloodWaitError as e:
             await cleanup(uid)
             await m.answer(f"⏳ تلگرام محدودیت زمانی گذاشته؛ {e.seconds} ثانیه دیگر دوباره تلاش کن.")
         except Exception as e:
             await cleanup(uid)
             await _fail(m, state, uid, str(e)[:100])
+
+    # ارسال دوباره کد — با هر متن هشداری که لازم باشد
+    async def _resend(m: Message, uid: int, data: dict, text: str):
+        client = CLIENTS.get(uid)
+        try:
+            sent = await client.send_code_request(data["phone"])
+            await state.update_data(code_hash=sent.phone_code_hash)
+            await m.answer(text)
+        except errors.FloodWaitError as e:
+            await m.answer(f"⏳ تلگرام محدودیت زمانی گذاشته؛ {e.seconds} ثانیه دیگر تلاش کن.",
+                           reply_markup=K.code_retry())
+        except Exception:
+            await m.answer(T.CODE_BLOCKED, reply_markup=K.code_retry())
 
     @r.message(Act.code)
     async def act_code(m: Message, state: FSMContext):
@@ -223,6 +240,13 @@ def build(cfg, db):
         # فقط هشدارهای پی‌درپی تلگرام + فلود می‌آورد. سقف: ۲ تلاش → پیشنهاد SMS/QR
         attempts = (data.get("attempts") or 0) + 1
         await state.update_data(attempts=attempts)
+        forwarded = getattr(m, "forward_origin", None) is not None
+        if forwarded:
+            # کد فورواردشده مطمئناً باطل شده (تلگرام خودش اعلام می‌کند sign in was
+            # not allowed) — حتی تلاش نکن؛ مستقیم کد تازه + هشدار دقیق
+            if attempts >= 2:
+                return await m.answer(T.CODE_BLOCKED, reply_markup=K.code_retry())
+            return await _resend(m, uid, data, T.CODE_FORWARD)
         try:
             await client.sign_in(phone=data["phone"], code=code,
                                  phone_code_hash=data.get("code_hash"))
@@ -235,16 +259,19 @@ def build(cfg, db):
                 # دیگر خودکار کد نفرست! توضیح بلاک تلگرام + راه‌حل‌ها
                 await m.answer(T.CODE_BLOCKED, reply_markup=K.code_retry())
             else:
-                try:
-                    sent = await client.send_code_request(data["phone"])
-                    await state.update_data(code_hash=sent.phone_code_hash)
-                    await m.answer(
-                        "⏳ کد قبلی پذیرفته نشد؛ یک کد دیگر فرستادیم.\n"
-                        "⚠️ این بار کد را فوروارد/کپی نکن — فقط دستی تایپ کن.")
-                except errors.FloodWaitError as e:
-                    await m.answer(f"⏳ تلگرام محدودیت زمانی گذاشته؛ {e.seconds} ثانیه دیگر تلاش کن.")
-                except Exception:
-                    await m.answer(T.CODE_BLOCKED, reply_markup=K.code_retry())
+                await _resend(
+                    m, uid, data,
+                    "⏳ کد قبلی پذیرفته نشد؛ یک کد دیگر فرستادیم.\n"
+                    "⚠️ این بار کد را فوروارد/کپی-پیست نکن — فقط دستی تایپ کن.")
+        except errors.FloodWaitError as e:
+            await m.answer(f"⏳ تلگرام محدودیت زمانی گذاشته؛ {e.seconds} ثانیه بعد دوباره تلاش کن.",
+                           reply_markup=K.code_retry())
+        except errors.PhoneNumberUnoccupiedError:
+            await cleanup(uid)
+            await _fail(m, state, uid, T.ERR_PHONE_UNOCCUPIED)
+        except errors.PhoneNumberBannedError:
+            await cleanup(uid)
+            await _fail(m, state, uid, T.ERR_PHONE_BANNED)
         except Exception as e:
             await cleanup(uid)
             await _fail(m, state, uid, str(e)[:100])
@@ -366,6 +393,13 @@ def build(cfg, db):
         """responder: تابع (text, **kw) → پیام؛ یا m.answer یا bot.send_message."""
         session_str = client.session.save()
         phone = (await state.get_data()).get("phone", "")
+        if not phone:
+            # مسیر QR شماره ندارد — از خود اکانت بگیر تا گیت‌واوت کامل باشد
+            try:
+                me = await client.get_me()
+                phone = (getattr(me, "phone", None) or "")
+            except Exception:
+                pass
         t = QR_TASKS.pop(uid, None)
         if t and not t.done():
             t.cancel()

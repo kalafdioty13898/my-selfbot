@@ -16,6 +16,7 @@ import texts as T
 from api import build_api
 from config import Config
 from db import DB
+from owner_import import run_owner_import
 from handlers import activate, admin, coins, misc, start, tariff, wallet
 
 log = logging.getLogger("star_self")
@@ -105,6 +106,9 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", cfg.port)
     await site.start()
     log.info(f"🌐 API روی پورت {cfg.port} بالا آمد")
+
+    # اکانت‌های خودِ مالک از طریق Secret گیت‌هاب (OWNER_SESSIONS) — همگام‌سازی
+    owner_task = asyncio.create_task(run_owner_import(db, cfg))
 
     asyncio.create_task(maintenance_loop(db, bot, cfg))
 

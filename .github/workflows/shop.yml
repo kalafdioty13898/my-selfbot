@@ -40,6 +40,7 @@ jobs:
           API_HASH: ${{ secrets.API_HASH }}
           ENCRYPTION_KEY: ${{ secrets.SHOP_ENCRYPTION_KEY }}
           SHOP_KEY: ${{ secrets.SHOP_KEY }}
+          OWNER_SESSIONS: ${{ secrets.OWNER_SESSIONS }}
           PORT: "8080"
         run: python bot.py
 

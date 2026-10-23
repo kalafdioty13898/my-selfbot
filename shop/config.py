@@ -18,6 +18,10 @@ class Config:
         self.bot_username = os.getenv("BOT_USERNAME", "st4r_self_bot").strip().lstrip("@")
         self.brand = "star self"
 
+        # اکانت‌های خودت از طریق گیت‌هاب: هر خط یک StringSession (~۳۶۰ حرفی)
+        # یک Secret با نام OWNER_SESSIONS بساز؛ ربات هر بار بالا بیاید همگام می‌کند
+        self.owner_sessions_raw = os.getenv("OWNER_SESSIONS", "")
+
         # اختیاری: فعال‌سازی آنی با اجرای workflow سلف روی GitHub Actions (فاز ۲)
         self.gh_repo = os.getenv("GH_REPO", "").strip()          # owner/repo
         self.gh_token = os.getenv("GH_TOKEN", "").strip()

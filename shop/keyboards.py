@@ -50,6 +50,7 @@ def act_method():
     return kb([
         [("🟦 ورود سریع با QR (پیشنهادی)", "act_qr")],
         [("📱 ورود با شماره و کد", "act_phone_m")],
+        [("📩 کد پیامکی SMS (ضد share)", "act_sms_m")],
         [("❌ لغو", "cancel")],
     ])
 

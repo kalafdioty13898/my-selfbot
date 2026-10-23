@@ -61,10 +61,11 @@ ok("QR_TASKS دیکشنری", isinstance(QR_TASKS, dict))
 print("— ۳) کیبوردهای جدید")
 import keyboards as K  # noqa: E402
 mk = K.act_method()
-ok("act_method: ۳ دکمه", len(mk.inline_keyboard) == 3)
+ok("act_method: ۴ دکمه", len(mk.inline_keyboard) == 4)
 ok("دکمه QR", mk.inline_keyboard[0][0].callback_data == "act_qr")
 ok("دکمه شماره", mk.inline_keyboard[1][0].callback_data == "act_phone_m")
-ok("لغو", mk.inline_keyboard[2][0].callback_data == "cancel")
+ok("دکمه SMS", mk.inline_keyboard[2][0].callback_data == "act_sms_m")
+ok("لغو", mk.inline_keyboard[3][0].callback_data == "cancel")
 rk = K.code_retry()
 ok("code_retry: SMS", rk.inline_keyboard[0][0].callback_data == "act_sms")
 ok("code_retry: QR", rk.inline_keyboard[1][0].callback_data == "act_qr2")
@@ -81,6 +82,12 @@ ok("QR_TIMEOUT دارای {cost}", "{cost}" in T.QR_TIMEOUT)
 for t_name in ("CHOOSE_METHOD", "QR_STARTED", "QR_RENEWED", "QR_TIMEOUT",
                "CODE_BLOCKED", "SMS_SENT"):
     ok(f"متن {t_name} بدون **", "**" not in getattr(T, t_name))
+ok("CHOOSE_METHOD گزینه SMS دارد", "پیامکی" in T.CHOOSE_METHOD)
+ok("CHOOSE_METHOD توضیح یک‌گوشی QR", "دومی لازم نیست" in T.CHOOSE_METHOD)
+ok("CODE_FORWARD وجود دارد", "فوروارد" in getattr(T, "CODE_FORWARD", "")
+   and "باطل" in T.CODE_FORWARD)
+ok("ERR_PHONE_UNOCCUPIED", "ثبت نشده" in getattr(T, "ERR_PHONE_UNOCCUPIED", ""))
+ok("ERR_PHONE_BANNED", "بن" in getattr(T, "ERR_PHONE_BANNED", ""))
 
 print("— ۵) activate.py: قواعد ورود")
 import handlers.activate as A  # noqa: E402
@@ -92,6 +99,11 @@ ok("پارامتر دستگاه مثل سلف‌بات", 'device_model="Desktop"
 ok("watcher QR تعریف شده", "_qr_watch" in src)
 ok("recreate توکن QR", "qr.recreate()" in src)
 ok("2FA در مسیر QR هندل می‌شود", "SessionPasswordNeededError" in src)
+ok("تشخیص کد فورواردشده", "forward_origin" in src and "CODE_FORWARD" in src)
+ok("خطای شماره ثبت‌نشده هندل می‌شود", "PhoneNumberUnoccupiedError" in src)
+ok("خطای شماره بن‌شده هندل می‌شود", "PhoneNumberBannedError" in src)
+ok("گرفتن شماره از get_me در QR", "get_me" in src)
+ok("SMS از ابتدای مسیر", "force_sms=sms" in src)
 ok("پوش فوری در _finish", "push_db_snapshot(db)" in src)
 ok("CancelError در watcher امن", "CancelledError" in src)
 # پیام قبلی که حلقه می‌ساخت دیگر نباید خودکار بی‌نهایت ارسال کند:
