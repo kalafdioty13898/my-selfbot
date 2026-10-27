@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """ماژول پروفایل‌گردان: چرخش خودکار اسم و بیو با متغیرهای زمان/تاریخ + ساعت زنده."""
+import html as _html
+
 from telethon.tl import functions, types
 
 from framework import Bot
@@ -8,8 +10,52 @@ from utils import now, render_vars
 ROTATE_MIN = 5  # هر چند دقیقه یک‌بار بچرخد
 
 
+def _esc(t):
+    return _html.escape(str(t or ""))
+
+
 def setup(bot: Bot):
     state = {"last": 0}
+
+    # ---------- پروفایل کامل (ریپلی یا آیدی/یوزرنیم) ----------
+    @bot.cmd("پروفایل", "profile", cat="پروفایل",
+             help="پروفایل <user|ریپلی> — مشخصات کامل طرف: نام، آیدی، بیو، آخرین بازدید + عکس")
+    async def _profile(event, ctx, args):
+        from utils import fmt_status, get_user, tmp_path
+        u = await get_user(ctx.client, event, args)
+        if not u:
+            return await ctx.reply(event, "❗ ریپلی کن یا آیدی/یوزرنیم بده")
+        name = " ".join(x for x in [getattr(u, "first_name", None),
+                                    getattr(u, "last_name", None)] if x) or "—"
+        uname = ("@" + u.username) if getattr(u, "username", None) else "—"
+        phone = getattr(u, "phone", None)
+        premium = bool(getattr(u, "premium", False))
+        about, common = "—", None
+        try:
+            full = await ctx.client(functions.users.GetFullUserRequest(u))
+            about = full.full_user.about or "—"
+            common = getattr(full.full_user, "common_chats_count", None)
+        except Exception:
+            pass
+        cap = (f"👤 <b>{_esc(name)}</b>\n"
+               f"🆔 <code>{u.id}</code>  |  {uname}\n"
+               f"📝 بیو: {_esc(about)}\n"
+               f"👁 آخرین بازدید: {fmt_status(getattr(u, 'status', None))}\n"
+               + (f"📱 تلفن: <code>{phone}</code>\n" if phone else "")
+               + ("⭐ پرمیوم ✅\n" if premium else "")
+               + (f"👥 گپ مشترک: {common}\n" if common is not None else ""))
+        path = None
+        try:
+            path = await ctx.client.download_profile_photo(u, file=tmp_path("pf"))
+        except Exception:
+            path = None
+        if path:
+            try:
+                return await ctx.client.send_file(event.chat_id, path, caption=cap,
+                                                  parse_mode="html")
+            except Exception:
+                pass
+        await ctx.reply(event, cap, parse_mode="html")
 
     async def _list_items(event, ctx, key, title):
         items = ctx.acc[key]

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """ابزارهای کمکی: متغیرها، دسترسی sudo، تشخیص دستور، ادمین، فایل موقت."""
+import asyncio
 import datetime
 import os
 import random
@@ -188,3 +189,72 @@ def chunk_text(text, limit=4000):
     if cur:
         out.append(cur)
     return out
+
+
+# ---------- تایپ جادویی ----------
+async def typing_then(ctx, chat, send):
+    """قبل از ارسال خودکار، «در حال تایپ...» نشان بده تا طبیعی به نظر برسد.
+    send = تابع بدون‌آرگومان که coroutine ارسال برمی‌گرداند.
+    اگر «تایپ جادویی خاموش» باشد یا client.action در دسترس نباشد، مستقیم ارسال می‌شود."""
+    try:
+        on = ctx.acc["sec"].get("typing", True)
+    except Exception:
+        on = True
+    if not on:
+        return await send()
+    try:
+        async with ctx.client.action(chat, "typing"):
+            await asyncio.sleep(1.1)
+            return await send()
+    except Exception:
+        return await send()
+
+
+def fmt_status(status, tzname="Asia/Tehran"):
+    """آخرین بازدید کاربر به فارسی."""
+    try:
+        from telethon.tl import types as tl
+        if isinstance(status, tl.UserStatusOnline):
+            return "🟢 آنلاین"
+        if isinstance(status, tl.UserStatusRecently):
+            return "🟡 اخیراً آنلاین"
+        if isinstance(status, tl.UserStatusOffline):
+            d = datetime.datetime.now(datetime.timezone.utc) - status.was_at
+            m = int(d.total_seconds() // 60)
+            if m < 60:
+                return f"🟠 {max(m, 1)} دقیقه پیش"
+            if m < 1440:
+                return f"🟠 {m // 60} ساعت پیش"
+            return f"🔴 {m // 1440} روز پیش"
+        if isinstance(status, tl.UserStatusLastWeek):
+            return "🔴 این هفته"
+        if isinstance(status, tl.UserStatusLastMonth):
+            return "🔴 این ماه"
+    except Exception:
+        pass
+    return "—"
+
+
+def parse_shift(arg):
+    """«9 تا 18» یا «9:30 تا 21:30» → (from_min, to_min)؛ None = خطا.
+    شیفت شب (تا < از) هم مجاز است."""
+    m = re.match(r"^\s*(\d{1,2})(?::(\d{1,2}))?\s*(?:تا|به|-|–|—|to)\s*(\d{1,2})(?::(\d{1,2}))?\s*$",
+                 (arg or "").strip())
+    if not m:
+        return None
+    h1, m1, h2, m2 = int(m.group(1)), int(m.group(2) or 0), int(m.group(3)), int(m.group(4) or 0)
+    if not (0 <= h1 <= 23 and 0 <= h2 <= 23 and 0 <= m1 <= 59 and 0 <= m2 <= 59):
+        return None
+    return h1 * 60 + m1, h2 * 60 + m2
+
+
+def in_shift(shift, tzname="Asia/Tehran"):
+    """الان داخل شیفت کاری است؟"""
+    if not shift:
+        return True
+    n = now(tzname)
+    t = n.hour * 60 + n.minute
+    f, to = shift["from"], shift["to"]
+    if f <= to:
+        return f <= t < to
+    return t >= f or t < to  # شیفت شب (مثلاً 22 تا 6)

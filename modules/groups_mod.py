@@ -161,6 +161,64 @@ def setup(bot: Bot):
         ctx.store.save()
         await ctx.reply(event, "🔊 سکوت موقت لغو شد")
 
+    # ================= قفل مدیا (گروه + پیوی) =================
+    LOCK_TYPES = [
+        ("استیکر", "locksticker", lambda m: bool(m.sticker)),
+        ("وویس", "lockvoice", lambda m: bool(m.voice)),
+        ("گیف", "lockgif", lambda m: bool(m.gif)),
+        ("فیلم", "lockvideo", lambda m: bool(m.video or m.video_note)),
+        ("موزیک", "lockmusic", lambda m: bool(m.audio) and not bool(m.voice)),
+    ]
+
+    def _mlock_cfg(ctx, event):
+        """تنظیم قفل مدیا برای همین چت (پیوی = تنظیم سراسری پیوی)."""
+        ml = ctx.acc["mlock"]
+        k = "pv" if event.is_private else _chat_key(event.chat_id)
+        return ml.setdefault(k, {}), k
+
+    def _make_lock(name, on):
+        async def _lock(event, ctx, args):
+            cfg, k = _mlock_cfg(ctx, event)
+            cfg[name] = on
+            ctx.store.save()
+            where = "پیوی (همه پیوی‌ها)" if event.is_private else "این گروه"
+            icon = "🔒" if on else "🔓"
+            return await ctx.reply(event, f"{icon} قفل {name} در {where} "
+                                          f"{'روشن شد' if on else 'برداشته شد'}")
+        return _lock
+
+    for _name, _en, _matcher in LOCK_TYPES:
+        bot.cmd(f"قفل {_name} روشن", _en, cat="گروه",
+                help=f"قفل {_name} روشن — {_name} ممنوع؛ در گروه اعضا و در پیوی همه حذف می‌شود "
+                     "(پیوی = همه پیوی‌ها)")(_make_lock(_name, True))
+        bot.cmd(f"قفل {_name} خاموش", _en + "off", cat="گروه",
+                help=f"قفل {_name} خاموش — آزاد کردن {_name}")(_make_lock(_name, False))
+
+    @bot.cmd("قفل ها", "locks", cat="گروه",
+             help="قفل ها — وضعیت قفل مدیا در این چت (و پیوی)")
+    async def _locks_status(event, ctx, args):
+        pv = ctx.acc["mlock"].get("pv", {})
+        chat = {} if event.is_private else ctx.acc["mlock"].get(_chat_key(event.chat_id), {})
+        lines = []
+        for name, _en, _m in LOCK_TYPES:
+            lines.append(f"• {name}: پیوی {'🔒' if pv.get(name) else '🔓'} | "
+                         f"این چت {'🔒' if chat.get(name) else '🔓'}")
+        await ctx.reply(event, "🔐 قفل‌های مدیا:\n" + "\n".join(lines)
+                        + "\n(پیوی = همه پیوی‌ها)")
+
+    async def _media_locked(ctx, msg, cfg):
+        """True اگر مدیای پیام قفل باشد."""
+        if not cfg:
+            return False
+        for _name, _en, matcher in LOCK_TYPES:
+            if cfg.get(_name):
+                try:
+                    if matcher(msg):
+                        return True
+                except Exception:
+                    continue
+        return False
+
     # ================= فیلتر کلمات =================
     @bot.cmd("فیلتر کردن", "filter", cat="گروه",
              help="فیلتر کردن <کلمه> — پیام حاوی کلمه حذف شود (در گروه و پیوی؛ چند خطی هم میشه)")
@@ -453,7 +511,7 @@ def setup(bot: Bot):
         if msg.out or msg.action:
             return
         uid = msg.sender_id
-        if not uid or ctx.is_sudo(uid) or uid in ctx.acc["black"]:
+        if not uid or ctx.is_sudo(uid) or uid in ctx.acc["black"] or uid == 777000:
             return
         sender = msg.sender
         if getattr(sender, "bot", False):
@@ -464,6 +522,9 @@ def setup(bot: Bot):
             # و «سکوت روشن» در پیوی هیچ کاری نمی‌کرد (باگ گزارش‌شده).
             if await _apply_mute_and_filters(ctx, msg, cid):
                 return
+            # قفل مدیا در پیوی: قفل پیوی سراسری
+            if await _media_locked(ctx, msg, ctx.acc["mlock"].get("pv")):
+                await _safe_del(msg)
             return
         if not event.is_group:
             return
@@ -472,4 +533,8 @@ def setup(bot: Bot):
                 return
         except Exception:
             return
-        await _apply_mute_and_filters(ctx, msg, cid)
+        if await _apply_mute_and_filters(ctx, msg, cid):
+            return
+        # قفل مدیا گروه: فقط اعضای عادی (ادمین‌ها آزادند)
+        if await _media_locked(ctx, msg, ctx.acc["mlock"].get(cid)):
+            await _safe_del(msg)

@@ -20,7 +20,10 @@ def default_account():
         "off": {"all": False, "chats": {}},
         "names": [], "names_on": False, "name_i": 0,
         "bios": [], "bios_on": False, "bio_i": 0,
-        "sec": {"on": False, "mode": "all", "text": "", "cool": 5, "offline_min": 5, "tag": False},
+        # sec: منشی — typing=تایپ جادویی، off_on/off_msg=پاسخ افلاین مستقل،
+        # shift={"from":9*60,"to":18*60,"on":True}=شیفت کاری
+        "sec": {"on": False, "mode": "all", "text": "", "cool": 5, "offline_min": 5, "tag": False,
+                "typing": True, "off_on": False, "off_msg": None, "shift": None},
         "seen": {},
         "black": [],
         "quick": {},
@@ -31,6 +34,10 @@ def default_account():
         "welcome": {},
         "lock": {},
         "mute": {},
+        # mlock: قفل مدیا — "pv" سراسری پیوی + کلید چت برای گروه‌ها
+        "mlock": {"pv": {}},
+        # routers: روتر فوروارد خودکار [{src, dst, kinds, src_label, dst_label}]
+        "routers": [],
         "filters": {},
         "rems": [],
         "daily": [],
@@ -38,6 +45,22 @@ def default_account():
         "cloud": {},
         "clk": {"name_on": False, "name_base": "", "bio_on": False, "bio_base": ""},
     }
+
+
+def norm_sec(s):
+    """کلیدهای جدید منشی را به تنظیمات قدیمی اضافه می‌کند (مهاجرت بی‌دردسر)."""
+    s.setdefault("typing", True)
+    s.setdefault("off_on", False)
+    s.setdefault("off_msg", None)
+    s.setdefault("shift", None)
+    # حالت قدیمی "offline" → منطق جدید: پاسخ افلاین مستقل با همان پیام
+    if s.get("mode") == "offline":
+        s["mode"] = "all"
+        s["on"] = False
+        s["off_on"] = True
+        if not s.get("off_msg") and s.get("text"):
+            s["off_msg"] = {"type": "text", "content": s["text"]}
+    return s
 
 
 class Store:

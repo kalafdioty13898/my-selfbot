@@ -79,7 +79,7 @@ def setup(bot: Bot):
         if not text:
             return
         uid = msg.sender_id
-        if not uid or ctx.is_sudo(uid) or uid in ctx.acc["black"]:
+        if not uid or ctx.is_sudo(uid) or uid in ctx.acc["black"] or uid == 777000:
             return
         sender = msg.sender
         if getattr(sender, "bot", False):
@@ -95,10 +95,12 @@ def setup(bot: Bot):
         cooldown[uid] = now_ts
         try:
             if q["type"] == "text":
-                from utils import render_vars
-                await ctx.client.send_message(event.chat_id,
-                                              render_vars(q["content"], ctx.cfg.tz, user=sender),
-                                              reply_to=msg.id)
+                from utils import render_vars, typing_then
+                body = render_vars(q["content"], ctx.cfg.tz, user=sender)
+
+                async def _snd():
+                    await ctx.client.send_message(event.chat_id, body, reply_to=msg.id)
+                await typing_then(ctx, event.chat_id, _snd)
             else:
                 await ctx.client.forward_messages(event.chat_id, q["chat"], q["msg"])
         except Exception:

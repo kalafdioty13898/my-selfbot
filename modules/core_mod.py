@@ -12,11 +12,12 @@ from utils import chunk_text, now, to_jalali, tmp_path, marked_id
 CATS = [
     ("پروفایل", "👤"), ("گروه", "👥"), ("منشی", "🤖"), ("یادآور", "⏰"),
     ("مدیا", "💾"), ("آنتی‌حذف", "🛡️"), ("ترجمه", "🌐"), ("پاسخ سریع", "💬"),
-    ("ابری", "☁️"), ("عمومی", "🧩"),
+    ("ابری", "☁️"), ("پیام", "📨"), ("ابزار", "🧰"), ("بازی", "🎮"), ("عمومی", "🧩"),
 ]
 
 SEP = "──────────────────"
-NUMS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+NUMS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟",
+        "⑪", "⑫", "⑬", "⑭", "⑮"]
 
 
 def setup(bot: Bot):
@@ -112,7 +113,9 @@ def setup(bot: Bot):
              "آنتی‌حذف": ["antidelete"], "منشی": ["secretary"],
              "پاسخ سریع": ["quick"], "پروفایل": ["profile"],
              "گروه": ["group"], "یادآور": ["reminder"],
-             "ترجمه": ["translate"], "ابری": ["cloud"]}
+             "ترجمه": ["translate"], "ابری": ["cloud"],
+             "پیام": ["msg", "message"], "ابزار": ["tools", "tool"],
+             "بازی": ["game", "games"]}
         return m.get(cat, [cat])
 
     # ---------- پینگ ----------
@@ -145,6 +148,11 @@ def setup(bot: Bot):
                 f"📝 بیوهای چرخشی: {len(acc['bios'])} ({'روشن' if acc['bios_on'] else 'خاموش'})"
                 f" | ⌚ ساعت بیو: {'روشن' if clk.get('bio_on') else 'خاموش'}\n"
                 f"🤖 منشی: {'✅' if acc['sec']['on'] else '❌'} (حالت {acc['sec']['mode']})\n"
+                f"😴 پاسخ افلاین: {'✅' if acc['sec'].get('off_on') else '❌'}"
+                f" | 🕘 شیفت: {'✅' if acc['sec'].get('shift') else '—'}"
+                f" | ⌨️ تایپ جادویی: {'✅' if acc['sec'].get('typing', True) else '❌'}\n"
+                f"🧭 روتر: {len(acc.get('routers') or [])}"
+                f" | 🔐 قفل مدیا: {max(0, len(acc.get('mlock') or {}) - 1)} چت\n"
                 f"🛡 آنتی‌حذف: {'✅' if acc['ad']['del'] else '❌'}\n"
                 f"📺 سیو چنل: {len(acc.get('chansave') or {})} چت\n"
                 f"📮 لاگ: {acc.get('log', {}).get('chat') or 'پیش‌فرض'}")
@@ -212,6 +220,24 @@ def setup(bot: Bot):
         await ctx.reply(event,
                         f"📮 مقصد لاگ ست شد: {dest}\n"
                         "🧪 تست: «ست لاگ تست» | برگشت: «ست لاگ خاموش»")
+
+    # ---------- هشدار امنیتی: ورود جدید به اکانت (پیام‌های تلگرام رسمی) ----------
+    @bot.msg_hook
+    async def _login_alert(event, ctx):
+        msg = event.message
+        if msg.out or msg.sender_id != 777000 or not event.is_private:
+            return
+        if ctx.bot_off(event.chat_id):
+            return
+        last = ctx.extra.get("last_login_alert", 0)
+        import time as _t
+        if _t.time() - last < 120:  # ضد اسپم: هر ۲ دقیقه حداکثر یک هشدار
+            return
+        ctx.extra["last_login_alert"] = _t.time()
+        body = (msg.raw_text or "ورود جدید به اکانت ثبت شد!")[:800]
+        await ctx.send(ctx.relay_chat(),
+                       "🔐 <b>هشدار امنیتی — پیام رسمی تلگرام (777000)</b>\n\n"
+                       + _html.escape(body), parse_mode="html")
 
     # ---------- ریست ----------
     @bot.cmd("ریست سلف", "reset", cat="عمومی", help="ریست سلف — پاک کردن همه تنظیمات این اکانت")
