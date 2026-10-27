@@ -73,6 +73,8 @@ def setup(bot: Bot):
         msg = event.message
         if msg.out:
             return
+        if ctx.bot_off(event.chat_id):
+            return  # سلف خاموش است — پاسخ سریع هم جواب ندهد
         text = (msg.raw_text or "").strip().lower()
         if not text:
             return

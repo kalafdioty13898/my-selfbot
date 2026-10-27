@@ -85,6 +85,15 @@ def setup(bot: Bot):
             try:
                 chat_id = int(cid)
                 entity = await ctx.client.get_entity(chat_id)
+                if isinstance(entity, types.Chat):
+                    # گروه معمولی — فقط قفل عنوان (عکس گروه معمولی ساپورت نیست)
+                    if lock.get("title_on") and lock.get("title") and entity.title != lock["title"]:
+                        try:
+                            await ctx.client(functions.messages.EditChatTitleRequest(
+                                await ctx.client.get_input_entity(chat_id), lock["title"]))
+                        except ChatAdminRequiredError:
+                            pass
+                    continue
                 if not isinstance(entity, types.Channel):
                     continue
                 if lock.get("title_on") and lock.get("title") and entity.title != lock["title"]:
@@ -116,23 +125,25 @@ def setup(bot: Bot):
             except Exception:
                 continue
 
-    # ================= سکوت =================
+    # ================= سکوت (گروه + پیوی) =================
     @bot.cmd("سکوت روشن", "muteon", cat="گروه",
-             help="سکوت روشن — همه (به‌جز ادمین‌ها و تو) پیامشان حذف شود")
+             help="سکوت روشن — همه (به‌جز ادمین‌ها و تو) پیامشان حذف شود؛ در پیوی هم کار می‌کند (پیام‌های طرف حذف شود)")
     async def _mute_on(event, ctx, args):
         ctx.acc["mute"][_chat_key(event.chat_id)] = {"on": True, "until": 0}
         ctx.store.save()
-        await ctx.reply(event, "🔇 گروه ساکت شد")
+        where = ("این پیوی — پیام‌های طرف مقابل خودکار حذف می‌شود"
+                 if event.is_private else "گروه — پیام همه به‌جز ادمین‌ها حذف می‌شود")
+        await ctx.reply(event, f"🔇 {where} ساکت شد")
 
     @bot.cmd("سکوت خاموش", "muteoff", cat="گروه",
-             help="سکوت خاموش — پایان سکوت گروه")
+             help="سکوت خاموش — پایان سکوت گروه یا پیوی")
     async def _mute_off(event, ctx, args):
         ctx.acc["mute"].pop(_chat_key(event.chat_id), None)
         ctx.store.save()
         await ctx.reply(event, "🔊 سکوت برداشته شد")
 
     @bot.cmd("سکوت همه", "muteall", cat="گروه",
-             help="سکوت همه <ثانیه> — سکوت موقت، مثلا: سکوت همه 30")
+             help="سکوت همه <ثانیه> — سکوت موقت (گروه/پیوی)، مثلا: سکوت همه 30")
     async def _mute_all(event, ctx, args):
         try:
             sec = int(args.strip())
@@ -140,7 +151,8 @@ def setup(bot: Bot):
             return await ctx.reply(event, "❗ عدد بده: سکوت همه 30")
         ctx.acc["mute"][_chat_key(event.chat_id)] = {"on": True, "until": time.time() + sec}
         ctx.store.save()
-        await ctx.reply(event, f"🔇 گروه {sec} ثانیه ساکت شد")
+        where = "این پیوی" if event.is_private else "گروه"
+        await ctx.reply(event, f"🔇 {where} {sec} ثانیه ساکت شد")
 
     @bot.cmd("لغو سکوت همه", "unmuteall", cat="گروه",
              help="لغو سکوت همه — پایان سکوت موقت")
@@ -151,7 +163,7 @@ def setup(bot: Bot):
 
     # ================= فیلتر کلمات =================
     @bot.cmd("فیلتر کردن", "filter", cat="گروه",
-             help="فیلتر کردن <کلمه> — پیام حاوی کلمه حذف شود (چند خطی هم میشه)")
+             help="فیلتر کردن <کلمه> — پیام حاوی کلمه حذف شود (در گروه و پیوی؛ چند خطی هم میشه)")
     async def _filter_add(event, ctx, args):
         words = [w.strip() for w in (args or "").splitlines() if w.strip()]
         if not words:
@@ -340,6 +352,8 @@ def setup(bot: Bot):
     @bot.action_hook
     async def _on_join(event, ctx):
         try:
+            if ctx.bot_off(event.chat_id):
+                return  # سلف در این چت خاموش است
             w = ctx.acc["welcome"].get(_chat_key(event.chat_id))
             if not w or not w.get("on") or not w.get("text"):
                 return
@@ -403,11 +417,40 @@ def setup(bot: Bot):
         except Exception as e:
             await ctx.reply(event, f"❌ {e.__class__.__name__}")
 
-    # ================= هوک مدریتی پیام‌های گروه =================
+    # ================= هوک مدریتی پیام‌های گروه + پیوی =================
+    async def _safe_del(msg):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+    async def _apply_mute_and_filters(ctx, msg, cid):
+        """منطق مشترک سکوت/فیلتر — در گروه و پیوی استفاده می‌شود؛
+        خروجی True یعنی پیام حذف شد و ادامه نده."""
+        mute = ctx.acc["mute"].get(cid)
+        if mute and mute.get("on"):
+            if mute.get("until") and time.time() > mute["until"]:
+                ctx.acc["mute"].pop(cid, None)
+                ctx.store.save()
+            else:
+                await _safe_del(msg)
+                return True
+        f = ctx.acc["filters"].get(cid)
+        if not f:
+            return False
+        text = (msg.raw_text or "").lower()
+        if any(w.lower() in text for w in f["words"]):
+            await _safe_del(msg)
+            return True
+        if f["allow"] and not any(w.lower() in text for w in f["allow"]):
+            await _safe_del(msg)
+            return True
+        return False
+
     @bot.msg_hook
     async def _moderate(event, ctx):
         msg = event.message
-        if msg.out or event.is_private or not event.is_group:
+        if msg.out or msg.action:
             return
         uid = msg.sender_id
         if not uid or ctx.is_sudo(uid) or uid in ctx.acc["black"]:
@@ -416,36 +459,17 @@ def setup(bot: Bot):
         if getattr(sender, "bot", False):
             return
         cid = _chat_key(event.chat_id)
+        if event.is_private:
+            # سکوت/فیلتر پیوی — چک ادمین معنا ندارد؛ قبلاً کل پیوی رد می‌شد
+            # و «سکوت روشن» در پیوی هیچ کاری نمی‌کرد (باگ گزارش‌شده).
+            if await _apply_mute_and_filters(ctx, msg, cid):
+                return
+            return
+        if not event.is_group:
+            return
         try:
             if await ctx.admins.is_admin(ctx.client, event.chat_id, uid):
                 return
         except Exception:
             return
-        # سکوت
-        mute = ctx.acc["mute"].get(cid)
-        if mute and mute.get("on"):
-            if mute.get("until") and time.time() > mute["until"]:
-                ctx.acc["mute"].pop(cid, None)
-                ctx.store.save()
-            else:
-                try:
-                    await msg.delete()
-                except Exception:
-                    pass
-                return
-        # فیلتر و کلمات مجاز
-        f = ctx.acc["filters"].get(cid)
-        if not f:
-            return
-        text = (msg.raw_text or "").lower()
-        if any(w.lower() in text for w in f["words"]):
-            try:
-                await msg.delete()
-            except Exception:
-                pass
-            return
-        if f["allow"] and not any(w.lower() in text for w in f["allow"]):
-            try:
-                await msg.delete()
-            except Exception:
-                pass
+        await _apply_mute_and_filters(ctx, msg, cid)

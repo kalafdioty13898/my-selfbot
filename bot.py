@@ -24,6 +24,18 @@ TICK_INTERVAL = 20
 MAX_DYNAMIC = 25  # سقف اکانت‌های مشتری‌های فروشگاه در هر ران
 
 
+async def warm_entity_cache(client, label="?"):
+    """کش اِنتیتی StringSession بعد از هر ری‌استارت Actions خالی است؛
+    هر چتی که با آیدی عددی (-100...) در تنظیمات ذخیره شده (قفل گروه، مقصد
+    سیو چنل/ذخیره خودکار، ست لاگ، ...) بدون این گرم‌سازی get_entity نمی‌شود
+    و قابلیت‌ها ساکت از کار می‌افتند. یک get_dialogs کش را پر می‌کند."""
+    try:
+        await client.get_dialogs(limit=300)
+        log.info("کش گفتگوهای اکانت %s گرم شد ✅", label)
+    except Exception as e:
+        log.warning("گرم‌سازی کش اکانت %s ناموفق: %s", label, e)
+
+
 class DynamicPool:
     """اکانت‌های مشتری‌های فروشگاه star self — استارت/استاپ زنده بدون ری‌استارت.
 
@@ -35,6 +47,7 @@ class DynamicPool:
         self.cfg = cfg
         self.store = store
         self.units = {}   # uid -> (client, (ticker_task, monitor_task))
+        self.warm = []    # تسک‌های گرم‌سازی کش (رفرنس نگه‌داری)
         self.dead = asyncio.Queue()  # uid هایی که کلاینت‌شان ناگهانی مرد
         self._seq = 1000
 
@@ -96,6 +109,8 @@ class DynamicPool:
             self.units[uid] = (client, (tick_task, mon_task))
             log.info("🛒 اکانت مشتری %s آماده شد: %s (id=%s)",
                      uid, (ctx.me.first_name or ""), ctx.me_id)
+            # گرم‌سازی کش — مقصدهای عددیِ تنظیمات بعد از ری‌استارت resolve نشدنی‌اند
+            self.warm.append(asyncio.create_task(warm_entity_cache(client, f"buyer:{uid}")))
             return True
         except Exception:
             log.exception("setup buyer %s failed", uid)
@@ -219,6 +234,7 @@ async def main():
     log.info("پایگاه داده بارگذاری شد (%d اکانت ثبت‌شده)", len(store.accs()))
 
     tasks = []
+    warm_tasks = []
     for i, client in alive:
         bot, ctx, ticker = build_account(client, store, cfg, i)
         await ctx.init()
@@ -227,6 +243,9 @@ async def main():
         tasks.append(asyncio.create_task(ticker()))
         # ⚠️ پایتون ۳.۱۱+: asyncio.wait coroutine خام قبول نمی‌کند — باید Task باشد
         tasks.append(asyncio.create_task(client.run_until_disconnected()))
+        # گرم‌سازی کش گفتگوها (بدون join — جدا از tasks اصلی تا FIRST_COMPLETED
+        # با تمام‌شدنش همه‌چیز قطع نشود)
+        warm_tasks.append(asyncio.create_task(warm_entity_cache(client, i)))
 
     # اکانت‌های مشتری‌های فروشگاه star self (فعال‌سازی ≤ ۲ دقیقه بعد از خرید)
     pool = DynamicPool(cfg, store)

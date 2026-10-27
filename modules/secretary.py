@@ -154,6 +154,8 @@ def setup(bot: Bot):
         msg = event.message
         if msg.out:
             return
+        if ctx.bot_off(event.chat_id):
+            return  # سلف خاموش است — منشی هم جواب ندهد (قبلاً نادیده گرفته می‌شد)
         s = ctx.acc["sec"]
         if not s["on"] or not s["text"]:
             return

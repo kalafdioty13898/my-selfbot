@@ -43,6 +43,17 @@ class Ctx:
     def is_sudo(self, uid):
         return uid in self.sudo_ids()
 
+    def bot_off(self, chat_id):
+        """سلف در این چت خاموش است؟ (سلف خاموش / سلف همگانی خاموش)
+
+        هوک‌های خودکار (منشی، پاسخ سریع، خوش‌آمدگویی) هم باید رعایت کنند —
+        قبلاً فقط دستورها گارد داشتند و منشی با سلفِ خاموش باز جواب می‌داد!"""
+        acc = self.acc
+        try:
+            return bool(acc["off"]["all"] or acc["off"]["chats"].get(str(chat_id)))
+        except Exception:
+            return False
+
     async def send(self, chat, text=None, **kw):
         try:
             kw.setdefault("link_preview", False)
@@ -166,13 +177,14 @@ class Bot:
                     break
             if arg is None:
                 continue
-            # گیت خاموش/روشن
+            # گیت خاموش/روشن — سلفِ خاموش فقط به «بقیه» جواب ندهد؛
+            # دستورهای خودت (out) همیشه کار کنند وگرنه خاموشی قابل برگشت نبود.
+            # انگلیسی‌ها (!on / !allon) هم مثل فارسی‌ها همیشه آزادند.
             if not always:
-                if acc["off"]["all"] and not msg.out:
-                    return
-                if (acc["off"]["all"] or acc["off"]["chats"].get(str(chat_id))) and a not in (
-                        "سلف روشن", "سلف همگانی روشن"):
-                    return
+                main = ("سلف روشن", "سلف همگانی روشن", "on", "allon")
+                if a not in main and not msg.out:
+                    if acc["off"]["all"] or acc["off"]["chats"].get(str(chat_id)):
+                        return
             try:
                 await fn(event, ctx, arg)
             except FloodWaitError as e:

@@ -103,7 +103,9 @@ def setup(bot: Bot):
             return "mention"
         rt = msg.reply_to_msg_id
         if rt:
-            t = cache.get(rt)
+            # کلید کش دوتایی است (chat_id, msg_id) — قبلاً با rt تنها نگاه می‌شد
+            # و همیشه None برمی‌گشت (fallback فچ کار می‌کرد ولی کش هدر می‌رفت)
+            t = cache.get((getattr(event, "chat_id", None), rt))
             if t and t.get("sender") == ctx.me_id:
                 return "reply"
             try:
