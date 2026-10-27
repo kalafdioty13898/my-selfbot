@@ -4,10 +4,17 @@ on:
   schedule:
     - cron: "30 */5 * * *"   # هر ۵ ساعت (۳۰ دقیقه اختلاف با سلف) — ربات تا ۳۵۰ دقیقه فعال می‌ماند
   workflow_dispatch:          # دکمه Run manually
+  push:                       # هر پوش روی main = ران مجدد فوری با کد جدید
+    branches: [main]
+    paths:
+      - 'shop/**'
+      - '.github/workflows/shop.yml'
+      - '!shop/data/**'       # کامیت خودکار دیتابیس دوباره ران نزند (ضد لوپ)
 
 concurrency:
   group: star-shop
-  cancel-in-progress: false   # ران بعدی در صف می‌ماند → پوشش تقریباً پیوسته
+  # پوش → ران قبلی کنسل و فوراً ران جدید؛ کرون/دستی → در صف می‌ماند (پوشش تقریباً پیوسته)
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   run:

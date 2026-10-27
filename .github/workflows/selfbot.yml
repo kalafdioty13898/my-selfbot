@@ -4,10 +4,16 @@ on:
   schedule:
     - cron: "0 */5 * * *"   # هر ۵ ساعت یک‌بار (ربات تا ۳۵۰ دقیقه فعال می‌ماند)
   workflow_dispatch:          # دکمه Run manually
+  push:                       # هر پوش روی main = ران مجدد فوری با کد جدید
+    branches: [main]
+    paths-ignore:
+      - 'shop/**'                 # تغییرات فروشگاه سلف را استارت نمی‌زند
+      - '.github/workflows/shop.yml'
 
 concurrency:
   group: selfbot
-  cancel-in-progress: false
+  # پوش → ران قبلی کنسل و فوراً ران جدید با کد جدید؛ کرون/دستی → در صف می‌ماند (پوشش پیوسته)
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   run:
