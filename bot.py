@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """نقطه ورود سلف‌بوت — پشتیبانی چند اکانت روی GitHub Actions."""
 import asyncio
+import collections
 import logging
 import os
 import signal
 import sys
+import time
 
 from telethon import TelegramClient, events
 from telethon.errors import AuthKeyUnregisteredError, UserDeactivatedBanError
@@ -46,10 +48,17 @@ class DynamicPool:
     def __init__(self, cfg, store):
         self.cfg = cfg
         self.store = store
-        self.units = {}   # uid -> (client, (ticker_task, monitor_task))
-        self.warm = []    # تسک‌های گرم‌سازی کش (رفرنس نگه‌داری)
+        self.units = {}     # uid -> {client, ctx, tick, mon, since}
+        self.warm = []      # تسک‌های گرم‌سازی کش (رفرنس نگه‌داری)
         self.dead = asyncio.Queue()  # uid هایی که کلاینت‌شان ناگهانی مرد
+        self.sessions = {}  # uid -> آخرین سشن شناخته‌شده (برای ری‌استارت دستی مدیر)
+        self.blocked = set()  # uid هایی که مدیر استاپ کرده — sync دوباره استارت‌شان نمی‌کند
         self._seq = 1000
+        # خودثبت برای پنل مدیر (modules/boss_mod.py) — بدون import چرخشی
+        try:
+            store.pool = self
+        except Exception:
+            pass
 
     def _buyer_cfg(self):
         import copy
@@ -58,6 +67,10 @@ class DynamicPool:
         return c
 
     async def start(self, uid: str, session: str) -> bool:
+        uid = str(uid)
+        if uid in self.blocked:
+            log.info("مشتری %s در لیست مسدود مدیر است — استارت نشد", uid)
+            return False
         if uid in self.units:
             # سشن این uid عوض شده — قدیمی را قطع کن و از نو بساز
             await self.stop(uid)
@@ -86,8 +99,14 @@ class DynamicPool:
             self._seq += 1
             bot, ctx, ticker = build_account(client, self.store, self._buyer_cfg(), f"u{uid}")
             await ctx.init()
+            ctx.buyer_uid = uid
+            # تله‌متری دستورها — فقط دستورهایی که به سلفِ خودش می‌زند (نه چت‌هایش)
+            ctx.extra["cmdlog"] = collections.deque(maxlen=40)
             tick_task = asyncio.create_task(ticker())
-            self.units[uid] = (client, (tick_task, None))
+            unit = {"client": client, "ctx": ctx, "tick": tick_task,
+                    "mon": None, "since": time.time()}
+            self.units[uid] = unit
+            self.sessions[uid] = session
 
             async def _monitor():
                 """مرگ غیرمنتظره کلاینت (بن/قطعی) → از پول خارج + گزارش به ShopSync."""
@@ -96,9 +115,10 @@ class DynamicPool:
                 except Exception:
                     pass
                 cur = self.units.get(uid)
-                if cur and cur[0] is client:  # نه از مسیر stop() دستی
+                if cur and cur["client"] is client:  # نه از مسیر stop() دستی
                     self.units.pop(uid, None)
-                    tick_task.cancel()
+                    if cur["tick"]:
+                        cur["tick"].cancel()
                     try:
                         self.dead.put_nowait(uid)
                     except Exception:
@@ -106,7 +126,7 @@ class DynamicPool:
                     log.warning("کلاینت مشتری %s قطع شد — بعد از پول بعدی دوباره استارت می‌شود", uid)
 
             mon_task = asyncio.create_task(_monitor())
-            self.units[uid] = (client, (tick_task, mon_task))
+            unit["mon"] = mon_task
             log.info("🛒 اکانت مشتری %s آماده شد: %s (id=%s)",
                      uid, (ctx.me.first_name or ""), ctx.me_id)
             # گرم‌سازی کش — مقصدهای عددیِ تنظیمات بعد از ری‌استارت resolve نشدنی‌اند
@@ -122,11 +142,13 @@ class DynamicPool:
             return False
 
     async def stop(self, uid: str):
+        uid = str(uid)
         unit = self.units.pop(uid, None)
         if not unit:
             return
-        client, tasks = unit
-        for t in (tasks or ()):  # (ticker, monitor)
+        client = unit["client"]
+        tasks = [unit["tick"], unit["mon"]]
+        for t in tasks:  # (ticker, monitor)
             if t:
                 t.cancel()
         try:
@@ -140,6 +162,15 @@ class DynamicPool:
             except Exception:
                 pass
         log.info("اکانت مشتری %s قطع شد", uid)
+
+    async def restart(self, uid: str) -> bool:
+        """ری‌استارت از آخرین سشن شناخته‌شده (برای پنل مدیر)."""
+        uid = str(uid)
+        s = self.sessions.get(uid)
+        if not s:
+            return False
+        await self.stop(uid)
+        return await self.start(uid, s)
 
     async def stop_all(self):
         for uid in list(self.units.keys()):

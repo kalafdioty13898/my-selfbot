@@ -40,6 +40,8 @@ def default_account():
         "routers": [],
         "filters": {},
         "rems": [],
+        # later: ارسال زمان‌دار [{at, chat, text, src_chat, src_msg}]
+        "later": [],
         "daily": [],
         "autodel": {},
         "cloud": {},

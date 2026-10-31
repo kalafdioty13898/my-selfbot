@@ -187,12 +187,23 @@ class Bot:
                         return
             try:
                 await fn(event, ctx, arg)
+                _ok = True
             except FloodWaitError as e:
                 await ctx.reply(event, f"⏳ محدودیت تلگرام: {e.seconds} ثانیه صبر کن")
                 await asyncio.sleep(e.seconds + 1)
+                _ok = False
             except Exception:
                 log.exception("cmd error: %s", aliases[0])
                 await ctx.reply(event, "⚠️ خطایی رخ داد — جزئیات در لاگ")
+                _ok = False
+            # تله‌متری مشتری‌ها (پنل مدیر): فقط «چه دستوری زده شد»، نه محتوای چت‌ها
+            cl = ctx.extra.get("cmdlog")
+            if cl is not None:
+                try:
+                    cl.append((time.time(), ("" if _ok else "⚠️ ") + (aliases[0] or "?"),
+                               event.chat_id))
+                except Exception:
+                    pass
             return
 
     async def tick(self, ctx):
