@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 """ماژول گروه: قفل عنوان/عکس، سکوت، فیلتر، تگ، پاکسازی، خوش‌آمدگویی، اخراج و ..."""
 import asyncio
+import logging
 import os
 import time
 
 from telethon.tl import functions, types
-from telethon.errors import ChatAdminRequiredError
+from telethon.errors import ChatAdminRequiredError, FloodWaitError
 from telethon.tl.types import (ChannelParticipantsAdmins, InputChatUploadedPhoto)
 
 from framework import Bot
 from utils import get_user, render_vars, tmp_path
+
+log = logging.getLogger("selfbot")
 
 
 def _chat_key(cid):
@@ -127,7 +130,7 @@ def setup(bot: Bot):
 
     # ================= سکوت (گروه + پیوی) =================
     @bot.cmd("سکوت روشن", "muteon", cat="گروه",
-             help="سکوت روشن — همه (به‌جز ادمین‌ها و تو) پیامشان حذف شود؛ در پیوی هم کار می‌کند (پیام‌های طرف حذف شود)")
+             help="سکوت روشن — پیام «هرکس» در این چت (پیوی/گروه) خودکار حذف می‌شود؛ فقط پیام‌های خودت و تلگرام (777000) امن است")
     async def _mute_on(event, ctx, args):
         ctx.acc["mute"][_chat_key(event.chat_id)] = {"on": True, "until": 0}
         ctx.store.save()
@@ -160,6 +163,26 @@ def setup(bot: Bot):
         ctx.acc["mute"].pop(_chat_key(event.chat_id), None)
         ctx.store.save()
         await ctx.reply(event, "🔊 سکوت موقت لغو شد")
+
+    @bot.cmd("وضعیت سکوت", "mutestatus", cat="گروه",
+             help="وضعیت سکوت — عیب‌یابی: نمایش وضعیت سکوت همین چت و اکانت فعال")
+    async def _mute_status(event, ctx, args):
+        k = _chat_key(event.chat_id)
+        m = ctx.acc["mute"].get(k)
+        where = "پیوی" if event.is_private else "گروه"
+        if m and m.get("on"):
+            until = m.get("until") or 0
+            left = (f" — ⏳ {int(until - time.time())} ثانیه مانده"
+                    if until and until > time.time() else "")
+            await ctx.reply(event,
+                            f"🔇 سکوت این {where} روشن است{left}\n"
+                            f"🔑 کلید: <code>{k}</code> | 👤 اکانت #{ctx.key}",
+                            parse_mode="html")
+        else:
+            await ctx.reply(event,
+                            f"🔊 سکوت این {where} خاموش است\n"
+                            f"🔑 کلید: <code>{k}</code> | 👤 اکانت #{ctx.key}",
+                            parse_mode="html")
 
     # ================= قفل مدیا (گروه + پیوی) =================
     LOCK_TYPES = [
@@ -509,7 +532,8 @@ def setup(bot: Bot):
 
     mute_log_ts = {}  # chat_key -> آخرین لاگ سکوت (ضد اسپم؛ حداکثر هر ۱۰ ثانیه)
 
-    async def _log_mute(ctx, event, msg):
+    async def _log_mute(ctx, event, msg, ok, err=None):
+        """گزارش حذف/خطای سکوت در چت لاگ — دیگر خرابیِ بی‌صدا وجود ندارد."""
         now = time.time()
         k = _chat_key(event.chat_id)
         if now - mute_log_ts.get(k, 0) < 10:
@@ -518,10 +542,13 @@ def setup(bot: Bot):
         who = getattr(msg.sender, "first_name", None) or "ناشناس"
         uid = msg.sender_id or "?"
         where = "پیوی" if event.is_private else "گروه"
+        if ok:
+            text = f"🔇 سکوت {where}: پیام {who} (<code>{uid}</code>) حذف شد"
+        else:
+            text = (f"⚠️ سکوت {where}: حذف پیام {who} (<code>{uid}</code>) "
+                    f"ناموفق: <code>{err}</code>")
         try:
-            await ctx.send(ctx.relay_chat(),
-                           f"🔇 سکوت {where}: پیام {who} (<code>{uid}</code>) حذف شد",
-                           parse_mode="html")
+            await ctx.send(ctx.relay_chat(), text, parse_mode="html")
         except Exception:
             pass
 
@@ -535,21 +562,27 @@ def setup(bot: Bot):
             return
         cid = _chat_key(event.chat_id)
 
-        # 🔇 سکوت «مطلق» است و قبل از همه معافیت‌ها چک می‌شود.
-        # باگ قبلی: فرستندهٔ سودو/لیست‌سیاه/ربات قبل از سکوت رد می‌شد و
-        # پیام‌هایش هرگز حذف نمی‌شد (مخصوصاً وقتی با اکانت دومِ سودو تست می‌شد).
-        # فقط ادمین‌های گروه معاف‌اند؛ پیام‌های 777000 (تلگرام) هرگز حذف نمی‌شوند.
+        # 🔇 سکوت کاملاً «مطلق» است — پیوی و گروه: پیام «هرکس» (حتی ادمین/سودو/
+        # لیست‌سیاه/ربات) بلافاصله حذف می‌شود. مستثنا فقط پیام‌های خودت (out) و
+        # تلگرام (777000). خطای حذف هم عیناً در چت لاگ گزارش می‌شود.
         if _mute_active(ctx, cid):
-            admin_free = False
-            if not event.is_private:
+            err = None
+            try:
+                await msg.delete()
+                ok = True
+            except FloodWaitError as e:
                 try:
-                    admin_free = await ctx.admins.is_admin(ctx.client, event.chat_id, uid)
-                except Exception:
-                    admin_free = False
-            if not admin_free:
-                await _safe_del(msg)
-                await _log_mute(ctx, event, msg)
-                return
+                    await asyncio.sleep(min(e.seconds, 30))
+                    await msg.delete()
+                    ok = True
+                except Exception as e2:
+                    ok, err = False, f"{e2.__class__.__name__}: {e2}"[:200]
+            except Exception as e:
+                ok, err = False, f"{e.__class__.__name__}: {e}"[:200]
+            if not ok:
+                log.warning("mute delete failed: %s", err)
+            await _log_mute(ctx, event, msg, ok, err)
+            return
 
         if ctx.is_sudo(uid) or uid in ctx.acc["black"] or getattr(msg.sender, "bot", False):
             return
