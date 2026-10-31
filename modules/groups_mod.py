@@ -482,17 +482,19 @@ def setup(bot: Bot):
         except Exception:
             pass
 
-    async def _apply_mute_and_filters(ctx, msg, cid):
-        """منطق مشترک سکوت/فیلتر — در گروه و پیوی استفاده می‌شود؛
-        خروجی True یعنی پیام حذف شد و ادامه نده."""
+    def _mute_active(ctx, cid):
+        """سکوت این چت فعاله؟ سکوت موقت منقضی‌شده را هم پاک می‌کند."""
         mute = ctx.acc["mute"].get(cid)
-        if mute and mute.get("on"):
-            if mute.get("until") and time.time() > mute["until"]:
-                ctx.acc["mute"].pop(cid, None)
-                ctx.store.save()
-            else:
-                await _safe_del(msg)
-                return True
+        if not (mute and mute.get("on")):
+            return False
+        if mute.get("until") and time.time() > mute["until"]:
+            ctx.acc["mute"].pop(cid, None)
+            ctx.store.save()
+            return False
+        return True
+
+    async def _apply_filters(ctx, msg, cid):
+        """فیلتر کلمات — خروجی True یعنی پیام حذف شد."""
         f = ctx.acc["filters"].get(cid)
         if not f:
             return False
@@ -505,22 +507,56 @@ def setup(bot: Bot):
             return True
         return False
 
+    mute_log_ts = {}  # chat_key -> آخرین لاگ سکوت (ضد اسپم؛ حداکثر هر ۱۰ ثانیه)
+
+    async def _log_mute(ctx, event, msg):
+        now = time.time()
+        k = _chat_key(event.chat_id)
+        if now - mute_log_ts.get(k, 0) < 10:
+            return
+        mute_log_ts[k] = now
+        who = getattr(msg.sender, "first_name", None) or "ناشناس"
+        uid = msg.sender_id or "?"
+        where = "پیوی" if event.is_private else "گروه"
+        try:
+            await ctx.send(ctx.relay_chat(),
+                           f"🔇 سکوت {where}: پیام {who} (<code>{uid}</code>) حذف شد",
+                           parse_mode="html")
+        except Exception:
+            pass
+
     @bot.msg_hook
     async def _moderate(event, ctx):
         msg = event.message
         if msg.out or msg.action:
             return
         uid = msg.sender_id
-        if not uid or ctx.is_sudo(uid) or uid in ctx.acc["black"] or uid == 777000:
-            return
-        sender = msg.sender
-        if getattr(sender, "bot", False):
+        if not uid or uid == 777000:
             return
         cid = _chat_key(event.chat_id)
+
+        # 🔇 سکوت «مطلق» است و قبل از همه معافیت‌ها چک می‌شود.
+        # باگ قبلی: فرستندهٔ سودو/لیست‌سیاه/ربات قبل از سکوت رد می‌شد و
+        # پیام‌هایش هرگز حذف نمی‌شد (مخصوصاً وقتی با اکانت دومِ سودو تست می‌شد).
+        # فقط ادمین‌های گروه معاف‌اند؛ پیام‌های 777000 (تلگرام) هرگز حذف نمی‌شوند.
+        if _mute_active(ctx, cid):
+            admin_free = False
+            if not event.is_private:
+                try:
+                    admin_free = await ctx.admins.is_admin(ctx.client, event.chat_id, uid)
+                except Exception:
+                    admin_free = False
+            if not admin_free:
+                await _safe_del(msg)
+                await _log_mute(ctx, event, msg)
+                return
+
+        if ctx.is_sudo(uid) or uid in ctx.acc["black"] or getattr(msg.sender, "bot", False):
+            return
+
         if event.is_private:
-            # سکوت/فیلتر پیوی — چک ادمین معنا ندارد؛ قبلاً کل پیوی رد می‌شد
-            # و «سکوت روشن» در پیوی هیچ کاری نمی‌کرد (باگ گزارش‌شده).
-            if await _apply_mute_and_filters(ctx, msg, cid):
+            # فیلتر/قفل مدیای پیوی — معافیت سودو فقط برای این‌ها معنا دارد
+            if await _apply_filters(ctx, msg, cid):
                 return
             # قفل مدیا در پیوی: قفل پیوی سراسری
             if await _media_locked(ctx, msg, ctx.acc["mlock"].get("pv")):
@@ -533,7 +569,7 @@ def setup(bot: Bot):
                 return
         except Exception:
             return
-        if await _apply_mute_and_filters(ctx, msg, cid):
+        if await _apply_filters(ctx, msg, cid):
             return
         # قفل مدیا گروه: فقط اعضای عادی (ادمین‌ها آزادند)
         if await _media_locked(ctx, msg, ctx.acc["mlock"].get(cid)):
