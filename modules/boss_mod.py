@@ -1,17 +1,143 @@
 # -*- coding: utf-8 -*-
-"""پنل مدیر فروشگاه — نظارت روی «سرویس» سلف مشتری‌ها (نه چت‌هایشان)
+"""پنل مدیر فروشگاه — نظارت و بازرسی سرویس سلف مشتری‌ها.
 
-چیزی که این پنل می‌دهد: سلامت سشن‌ها، چه دستورهایی به سلفِ خودشان زده‌اند
-(تله‌متری نرم‌افزار — برای کشف سوءاستفاده مثل بمبر)، ری‌استارت/استاپ/مسدود.
+دو لایه:
+۱) سرویس: سلامت سشن‌ها، چه دستورهایی به سلفِ خودشان زده‌اند (تله‌متری —
+   برای کشف سوءاستفاده مثل بمبر)، ری‌استارت/استاپ/مسدود.
+۲) بازرسی (فقط مدیر، فقط خواندنی): «گفتگوهای مشتری» لیست چت‌های اکانتش،
+   «بازدید مشتری» خواندن یک چت، «فعالیت مشتری» آخرین پیام‌های خروجی اکانت —
+   برای چکِ سوءاستفاده (بمبر/اسپم/کلاهبرداری) طبق توافق قبلی با مشتری.
+   هر بازرسی یک خط ردپا در چت لاگ می‌گذارد (چه چیزی، کی — بدون محتوا).
 
-مرز اخلاقی/قانونی: وارد چت‌های خصوصی مشتری شدن یا با اکانتش پیام فرستادن
-جاسوسی است و عمداً در این ماژول جایی ندارد.
+مرز: فرستادن پیام با اکانت مشتری عمداً پیاده نشده — بازرسی یک‌طرفه و
+فقط خواندنی است و هیچ دستوری با کلاینت مشتری چیزی نمی‌فرستد.
 """
+import html
 import time
+from zoneinfo import ZoneInfo
 
 from framework import Bot
+from telethon.errors import FloodWaitError
 
+TEHRAN = ZoneInfo("Asia/Tehran")
 MAX_DYNAMIC = 25  # هماهنگ با bot.py — فقط برای نمایش
+
+
+def _esc(s):
+    return html.escape(str(s or ""))
+
+
+def _short(s, n=70):
+    s = (s or "").replace("\n", " ").strip()
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _fmt_time(dt):
+    try:
+        dt = dt.astimezone(TEHRAN)
+        now = time.localtime()
+        same_day = (dt.year, dt.month, dt.day) == (now.tm_year, now.tm_mon, now.tm_mday)
+        head = "" if same_day else f"{dt.month:02d}/{dt.day:02d} "
+        return head + f"{dt.hour:02d}:{dt.minute:02d}"
+    except Exception:
+        return "?"
+
+
+def _kind_icon(e):
+    try:
+        cn = type(e).__name__
+        if cn == "User":
+            return "🤖" if getattr(e, "bot", False) else "👤"
+        if cn == "Channel":
+            return "📢" if getattr(e, "broadcast", False) else "👥"
+        if cn == "Chat":
+            return "👥"
+    except Exception:
+        pass
+    return "•"
+
+
+def _msg_text(msg):
+    """متن پیام یا برچسب مدیا (بدون دانلود)."""
+    t = (getattr(msg, "raw_text", None) or "").strip()
+    if t:
+        return t
+    if getattr(msg, "action", None) is not None:
+        return "⚙️ [سیستمی]"
+    if getattr(msg, "media", None) is None:
+        return ""
+    if getattr(msg, "photo", None):
+        return "🖼 [عکس]"
+    if getattr(msg, "voice", None):
+        return "🎙 [ویس]"
+    if getattr(msg, "video_note", None):
+        return "⭕️ [ویدیو دایره‌ای]"
+    if getattr(msg, "video", None):
+        return "🎬 [ویدیو]"
+    if getattr(msg, "gif", None):
+        return "🎞 [گیف]"
+    if getattr(msg, "sticker", None):
+        return "🏷 [استیکر]"
+    if getattr(msg, "music", None):
+        return "🎵 [موسیقی]"
+    cn = type(msg.media).__name__
+    return {"MessageMediaContact": "👤 [مخاطب]",
+            "MessageMediaGeo": "📍 [لوکیشن]",
+            "MessageMediaPoll": "📊 [نظرسنجی]",
+            "MessageMediaDice": "🎲 [دیس]",
+            "MessageMediaGame": "🎮 [بازی]",
+            "MessageMediaInvoice": "🧾 [فاکتور]",
+            "MessageMediaWebPage": ""}.get(cn, "📎 [فایل]")
+
+
+async def _sender_name(msg):
+    try:
+        s = await msg.get_sender()
+        if s is None:
+            return ""
+        return (getattr(s, "first_name", None) or getattr(s, "title", None)
+                or getattr(s, "username", None) or "")
+    except Exception:
+        return "?"
+
+
+async def _temp_client(ctx, session):
+    """کلاینت موقت فقط-خواندنی برای مشتریِ آفلاین (سشن کش‌شده پول).
+    در تست‌ها جایگزین می‌شود. None = سشن دیگر معتبر نیست."""
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+    c = TelegramClient(StringSession(session), ctx.cfg.api_id, ctx.cfg.api_hash,
+                       device_model="Desktop", system_version="Windows 10",
+                       app_version="Star Self 1.0")
+    await c.connect()
+    if not await c.is_user_authorized():
+        try:
+            await c.disconnect()
+        except Exception:
+            pass
+        return None
+    return c
+
+
+async def _client_for(ctx, pool, uid):
+    """(کلاینت، موقت؟) — آنلاین: کلاینت پول؛ آفلاین: سشن کش‌شده → کلاینت موقت."""
+    unit = pool.units.get(uid) if pool else None
+    if unit and unit.get("client"):
+        return unit["client"], False
+    s = (pool.sessions.get(uid) if pool else None)
+    if not s:
+        return None, False
+    try:
+        c = await _temp_client(ctx, s)
+    except Exception:
+        return None, True
+    return (c if c else None), True
+
+
+def _split_uid(args):
+    parts = (args or "").split()
+    uid = parts[0].lstrip("uU") if parts and parts[0].lstrip("uU").isdigit() else None
+    return uid, parts
 
 
 def setup(bot: Bot):
@@ -42,6 +168,34 @@ def setup(bot: Bot):
         sec = int(sec)
         h, m = sec // 3600, (sec % 3600) // 60
         return f"{h} ساعت و {m} دقیقه" if h else f"{m} دقیقه"
+
+    async def _resolve_client(event, ctx, uid):
+        """کلاینت مشتری برای بازرسی + پیام خطای مناسب. None = پیام داده‌ایم."""
+        pool = _pool(ctx)
+        if not pool:
+            await ctx.reply(event, "ℹ️ فروشگاه در این ران فعال نیست")
+            return None, False, pool
+        client, temp = await _client_for(ctx, pool, uid)
+        if client is None:
+            if temp:
+                await ctx.reply(event,
+                                f"❗ سشن مشتری <code>{uid}</code> معتبر نیست "
+                                "(قطع شده یا بن شده)", parse_mode="html")
+            else:
+                await ctx.reply(event,
+                                f"ℹ️ مشتری <code>{uid}</code> آنلاین نیست و سشنش "
+                                "در این ران کش نشده", parse_mode="html")
+            return None, False, pool
+        return client, temp, pool
+
+    async def _audit(ctx, uid, what):
+        """ردپای بازرسی در چت لاگ — بدون محتوا، فقط چه/کی."""
+        try:
+            await ctx.send(ctx.relay_chat(),
+                           f"🔍 بازرسی مشتری <code>{uid}</code> — {what}",
+                           parse_mode="html")
+        except Exception:
+            pass
 
     @bot.cmd("وضعیت مشتری‌ها", "clients", cat="مدیریت",
              help="وضعیت مشتری‌ها — لیست اکانت‌های فعال خریداران سلف + مدت آنلاین‌بودن")
@@ -94,10 +248,12 @@ def setup(bot: Bot):
         b = (c.extra.get("bomber") or {})
         if b.get("running"):
             lines.append(f"💣 بمبر فعال است! {b.get('sent', 0)}/{b.get('total', 0)}")
+        lines.append(f"\n🔎 بازرسی: «گفتگوهای مشتری <code>{uid}</code>» | "
+                     f"«فعالیت مشتری <code>{uid}</code>»")
         await ctx.reply(event, "\n".join(lines), parse_mode="html")
 
     @bot.cmd("لاگ مشتری", "clientlog", cat="مدیریت",
-             help="لاگ مشتری <uid> — دستورهایی که به سلفش زده (تله‌متری؛ چت‌هایش دیده نمی‌شود)")
+             help="لاگ مشتری <uid> — دستورهایی که به سلفش زده (تله‌متری سرویس؛ خواندن چت‌ها: «گفتگوهای مشتری»)")
     async def _client_log(event, ctx, args):
         if not _owner(ctx):
             return await ctx.reply(event, "❗ این دستور مال مدیر فروشگاه است")
@@ -183,3 +339,149 @@ def setup(bot: Bot):
             return await ctx.reply(event, "ℹ️ مسدودی‌ای نیست")
         await ctx.reply(event, "🚫 مسدودها: " + "، ".join(f"<code>{u}</code>" for u in sorted(pool.blocked)),
                         parse_mode="html")
+
+    # ---------- بازرسی (فقط خواندنی) ----------
+
+    @bot.cmd("گفتگوهای مشتری", "چت‌های مشتری", "dialogs", cat="مدیریت",
+             help="گفتگوهای مشتری <uid> [تعداد] — آخرین چت‌های اکانت مشتری، شماره‌دار برای «بازدید مشتری»")
+    async def _client_dialogs(event, ctx, args):
+        if not _owner(ctx):
+            return await ctx.reply(event, "❗ این دستور مال مدیر فروشگاه است")
+        uid, parts = _split_uid(args)
+        if not uid:
+            return await ctx.reply(event, "❗ فرمت: گفتگوهای مشتری 123")
+        client, temp, pool = await _resolve_client(event, ctx, uid)
+        if client is None:
+            return
+        dlg_list, err = None, None
+        try:
+            try:
+                lim = int(parts[1])
+            except (IndexError, ValueError):
+                lim = 20
+            lim = max(5, min(lim, 40))
+            dlg_list = await client.get_dialogs(limit=lim)
+        except FloodWaitError as e:
+            err = f"⏳ محدودیت تلگرام: {e.seconds} ثانیه صبر کن"
+        except Exception as e:
+            err = f"❗ خواندن گفتگوها نشد: {e.__class__.__name__}"
+        finally:
+            if temp:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+        if err:
+            return await ctx.reply(event, err)
+        if not dlg_list:
+            return await ctx.reply(event, "ℹ️ گفتگویی پیدا نشد")
+        ctx.extra.setdefault("dlgmap", {})[uid] = [
+            (d.id, d.name or str(d.id)) for d in dlg_list]
+        lines = [f"💬 گفتگوهای مشتری <code>{uid}</code> ({len(dlg_list)} تا آخر):"]
+        for i, d in enumerate(dlg_list, 1):
+            un = getattr(d, "unread_count", 0) or 0
+            extra = f" — 🔴{un}" if un else ""
+            lines.append(f"{i}. {_kind_icon(d.entity)} {_esc(d.name) or '—'}{extra}")
+        lines.append(f"🔎 خواندن یکی: «بازدید مشتری {uid} <شماره>»")
+        await _audit(ctx, uid, "لیست گفتگوها")
+        await ctx.reply(event, "\n".join(lines), parse_mode="html")
+
+    @bot.cmd("بازدید مشتری", "خواندن چت مشتری", "peek", cat="مدیریت",
+             help="بازدید مشتری <uid> <شماره> [تعداد] — پیام‌های آخر یکی از گفتگوهای «گفتگوهای مشتری» (فقط خواندن)")
+    async def _client_peek(event, ctx, args):
+        if not _owner(ctx):
+            return await ctx.reply(event, "❗ این دستور مال مدیر فروشگاه است")
+        uid, parts = _split_uid(args)
+        if not uid or len(parts) < 2:
+            return await ctx.reply(event, "❗ فرمت: بازدید مشتری 123 4 [10]")
+        try:
+            n = int(parts[1])
+            count = int(parts[2]) if len(parts) > 2 else 10
+        except ValueError:
+            return await ctx.reply(event, "❗ فرمت: بازدید مشتری 123 4 [10]")
+        count = max(1, min(count, 30))
+        client, temp, pool = await _resolve_client(event, ctx, uid)
+        if client is None:
+            return
+        title, msgs, err = None, [], None
+        try:
+            dm = ctx.extra.setdefault("dlgmap", {})
+            dl = dm.get(uid)
+            if not dl:
+                dl = [(d.id, d.name or str(d.id))
+                      for d in await client.get_dialogs(limit=20)]
+                dm[uid] = dl
+            if n < 1 or n > len(dl):
+                err = f"❗ شماره گفتگو نامعتبر است — اول «گفتگوهای مشتری {uid}»"
+            else:
+                did, title = dl[n - 1]
+                async for m in client.iter_messages(did, limit=count):
+                    msgs.append(m)
+        except FloodWaitError as e:
+            err = f"⏳ محدودیت تلگرام: {e.seconds} ثانیه صبر کن"
+        except Exception as e:
+            err = f"❗ خواندن پیام‌ها نشد: {e.__class__.__name__}"
+        finally:
+            if temp:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+        if err:
+            return await ctx.reply(event, err)
+        if not msgs:
+            return await ctx.reply(event, "ℹ️ پیامی در این گفتگو پیدا نشد")
+        lines = [f"💬 <b>{_esc(title)}</b> — {len(msgs)} پیام آخر (جدید → قدیم):"]
+        for i, m in enumerate(msgs, 1):
+            name = getattr(m, "post_author", None)
+            if not name:
+                name = await _sender_name(m)
+            if not name:
+                name = "—"
+            body = _esc(_short(_msg_text(m), 90))
+            lines.append(f"{i}. <b>{_esc(name)}</b> "
+                         f"<code>{_fmt_time(getattr(m, 'date', None))}</code>: {body or '—'}")
+        await _audit(ctx, uid, f"بازدید چت «{_short(title or '', 30)}»")
+        await ctx.reply(event, "\n".join(lines), parse_mode="html")
+
+    @bot.cmd("فعالیت مشتری", "activity", cat="مدیریت",
+             help="فعالیت مشتری <uid> — آخرین پیام خروجیِ اکانت مشتری در هر گفتگو (نمای چک سوءاستفاده)")
+    async def _client_activity(event, ctx, args):
+        if not _owner(ctx):
+            return await ctx.reply(event, "❗ این دستور مال مدیر فروشگاه است")
+        uid, _parts = _split_uid(args)
+        if not uid:
+            return await ctx.reply(event, "❗ فرمت: فعالیت مشتری 123")
+        client, temp, pool = await _resolve_client(event, ctx, uid)
+        if client is None:
+            return
+        items, err = [], None
+        try:
+            for d in await client.get_dialogs(limit=15):
+                last = None
+                async for m in client.iter_messages(d.id, limit=15, from_user="me"):
+                    last = m
+                    break
+                if last is not None:
+                    items.append((last.date, d.name or str(d.id), _msg_text(last)))
+            items.sort(key=lambda x: x[0], reverse=True)
+        except FloodWaitError as e:
+            err = f"⏳ محدودیت تلگرام: {e.seconds} ثانیه صبر کن"
+        except Exception as e:
+            err = f"❗ خواندن فعالیت نشد: {e.__class__.__name__}"
+        finally:
+            if temp:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+        if err:
+            return await ctx.reply(event, err)
+        if not items:
+            return await ctx.reply(event, "ℹ️ در گفتگوهای اخیرش چیزی نفرستاده")
+        lines = [f"📤 آخرین پیام‌های خروجی <code>{uid}</code> (جدید → قدیم):"]
+        for dt, tname, body in items[:12]:
+            lines.append(f"• <b>{_esc(tname)}</b> <code>{_fmt_time(dt)}</code>: "
+                         f"{_esc(_short(body, 80)) or '—'}")
+        await _audit(ctx, uid, "فعالیت خروجی")
+        await ctx.reply(event, "\n".join(lines), parse_mode="html")

@@ -46,6 +46,8 @@ def default_account():
         "autodel": {},
         "cloud": {},
         "clk": {"name_on": False, "name_base": "", "bio_on": False, "bio_base": ""},
+        # ai: هوش مصنوعی — {"key", "model"} (کلید Gemini هر اکانت جدا)
+        "ai": {},
     }
 
 
