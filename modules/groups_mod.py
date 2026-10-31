@@ -129,21 +129,82 @@ def setup(bot: Bot):
                 continue
 
     # ================= سکوت (گروه + پیوی) =================
-    @bot.cmd("سکوت روشن", "muteon", cat="گروه",
-             help="سکوت روشن — پیام «هرکس» در این چت (پیوی/گروه) خودکار حذف می‌شود؛ فقط پیام‌های خودت و تلگرام (777000) امن است")
+    async def _mute_target_key(ctx, event, args):
+        """هدف سکوت کیست؟
+        ۱) ریپ روی پیامِ شخصِ دیگر → پیویِ همان شخص (کلید = آیدی او)
+        ۲) @username یا آیدی در دستور → پیویِ همان شخص
+        ۳) هیچ‌کدام → None یعنی همین چت (پیوی/گروه فعلی).
+        خروجی: (کلید یا None، اسم نمایشی)"""
+        try:
+            rep = await event.get_reply_message()
+        except Exception:
+            rep = None
+        if rep and rep.sender_id and rep.sender_id != ctx.me_id:
+            name = None
+            try:
+                name = getattr(rep.sender, "first_name", None)
+            except Exception:
+                pass
+            return _chat_key(rep.sender_id), (name or str(rep.sender_id))
+        a = (args or "").strip()
+        # کلمهٔ کوتاه عددی (مثل 30) هدف نیست؛ آیدی ۷+ رقمی هدف است
+        if a and (not a.isdigit() or len(a) >= 7) and ctx.client:
+            try:
+                u = await get_user(ctx.client, event, a)
+            except Exception:
+                u = None
+            if u and getattr(u, "id", None) and u.id != ctx.me_id:
+                return _chat_key(u.id), (getattr(u, "first_name", None) or str(u.id))
+        return None, None
+
+    @bot.cmd("سکوت روشن", "سکوت پیوی", cat="گروه",
+             help="سکوت روشن — همین چت (پیوی/گروه) ساکت می‌شود؛ یا روی پیام کسی ریپ بزن "
+                  "تا پیویِ خودش ساکت شود؛ یا: سکوت روشن @username. "
+                  "پیام‌های هدف از این لحظه خودکار حذف می‌شوند")
     async def _mute_on(event, ctx, args):
+        tk, name = await _mute_target_key(ctx, event, args)
+        if tk:
+            ctx.acc["mute"][tk] = {"on": True, "until": 0}
+            ctx.store.save()
+            return await ctx.reply(
+                event,
+                f"🔇 سکوت پیوی «{name}» روشن شد ✅\n"
+                f"پیام‌هایش در پیوی از الان خودکار حذف می‌شود.\n"
+                f"🔊 خاموش: ریپ + «سکوت خاموش»")
         ctx.acc["mute"][_chat_key(event.chat_id)] = {"on": True, "until": 0}
         ctx.store.save()
-        where = ("این پیوی — پیام‌های طرف مقابل خودکار حذف می‌شود"
-                 if event.is_private else "گروه — پیام همه به‌جز ادمین‌ها حذف می‌شود")
-        await ctx.reply(event, f"🔇 {where} ساکت شد")
+        if event.is_private:
+            await ctx.reply(event,
+                            "🔇 سکوت این پیوی روشن شد ✅\n"
+                            "پیام‌های طرف از الان خودکار حذف می‌شود "
+                            "(فقط پیام‌های خودت و تلگرام امن‌اند).\n"
+                            "🔊 خاموش: «سکوت خاموش»")
+        else:
+            await ctx.reply(event,
+                            "🔇 سکوت این گروه روشن شد ✅\n"
+                            "پیام همه از الان خودکار حذف می‌شود "
+                            "(فقط پیام‌های خودت و تلگرام امن‌اند).\n"
+                            "🔊 خاموش: «سکوت خاموش»")
 
-    @bot.cmd("سکوت خاموش", "muteoff", cat="گروه",
-             help="سکوت خاموش — پایان سکوت گروه یا پیوی")
+    @bot.cmd("سکوت خاموش", "سکوت پیوی خاموش", cat="گروه",
+             help="سکوت خاموش — پایان سکوت همین چت؛ یا ریپ روی پیام کسی → پایان سکوت پیویِ او")
     async def _mute_off(event, ctx, args):
+        tk, name = await _mute_target_key(ctx, event, args)
+        if tk:
+            ctx.acc["mute"].pop(tk, None)
+            ctx.store.save()
+            return await ctx.reply(event, f"🔊 سکوت پیوی «{name}» برداشته شد ✅")
         ctx.acc["mute"].pop(_chat_key(event.chat_id), None)
         ctx.store.save()
-        await ctx.reply(event, "🔊 سکوت برداشته شد")
+        await ctx.reply(event, "🔊 سکوت برداشته شد ✅")
+
+    @bot.cmd("سکوت", "mute", cat="گروه",
+             help="سکوت — خلاصهٔ «سکوت روشن» (همان کار را می‌کند)؛ سکوت 30 = سکوت موقت ۳۰ ثانیه‌ای")
+    async def _mute_quick(event, ctx, args):
+        s = (args or "").strip()
+        if s.isdigit() and len(s) < 7:
+            return await _mute_all(event, ctx, s)
+        await _mute_on(event, ctx, s)
 
     @bot.cmd("سکوت همه", "muteall", cat="گروه",
              help="سکوت همه <ثانیه> — سکوت موقت (گروه/پیوی)، مثلا: سکوت همه 30")
@@ -165,22 +226,27 @@ def setup(bot: Bot):
         await ctx.reply(event, "🔊 سکوت موقت لغو شد")
 
     @bot.cmd("وضعیت سکوت", "mutestatus", cat="گروه",
-             help="وضعیت سکوت — عیب‌یابی: نمایش وضعیت سکوت همین چت و اکانت فعال")
+             help="وضعیت سکوت — نمایش وضعیت سکوت همین چت (یا با ریپ: پیویِ آن شخص) و اکانت فعال")
     async def _mute_status(event, ctx, args):
-        k = _chat_key(event.chat_id)
+        tk, name = await _mute_target_key(ctx, event, args)
+        if tk:
+            k = tk
+            where = f"پیوی «{name}»"
+        else:
+            k = _chat_key(event.chat_id)
+            where = "پیوی" if event.is_private else "گروه"
         m = ctx.acc["mute"].get(k)
-        where = "پیوی" if event.is_private else "گروه"
         if m and m.get("on"):
             until = m.get("until") or 0
             left = (f" — ⏳ {int(until - time.time())} ثانیه مانده"
                     if until and until > time.time() else "")
             await ctx.reply(event,
-                            f"🔇 سکوت این {where} روشن است{left}\n"
+                            f"🔇 سکوت {where} روشن است{left}\n"
                             f"🔑 کلید: <code>{k}</code> | 👤 اکانت #{ctx.key}",
                             parse_mode="html")
         else:
             await ctx.reply(event,
-                            f"🔊 سکوت این {where} خاموش است\n"
+                            f"🔊 سکوت {where} خاموش است\n"
                             f"🔑 کلید: <code>{k}</code> | 👤 اکانت #{ctx.key}",
                             parse_mode="html")
 
