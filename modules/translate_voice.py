@@ -28,6 +28,36 @@ VOICES = {
 }
 
 
+def _looks_fa(t):
+    return any("\u0600" <= ch <= "\u06FF" for ch in (t or ""))
+
+
+def _fetch_dict(word):
+    """dictionaryapi.dev (رایگان، بدون کلید) → (تلفظ، [(نوع، معنی)]) یا (None, [])."""
+    import json as _json
+    import urllib.parse
+    import urllib.request
+    url = ("https://api.dictionaryapi.dev/api/v2/entries/en/"
+           + urllib.parse.quote(word))
+    try:
+        with urllib.request.urlopen(url, timeout=12) as r:
+            data = _json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:
+        return None, []
+    if not isinstance(data, list) or not data:
+        return None, []
+    e0 = data[0] or {}
+    ph = e0.get("phonetic") or next(
+        (p.get("text") for p in (e0.get("phonetics") or []) if p.get("text")), None)
+    senses = []
+    for m in (e0.get("meanings") or [])[:3]:
+        pos = m.get("partOfSpeech") or "?"
+        for d_ in (m.get("definitions") or [])[:2]:
+            senses.append((pos, d_.get("definition") or ""))
+            break
+    return ph, senses
+
+
 def setup(bot: Bot):
     @bot.cmd("ترجمه", "tr", cat="ترجمه",
              help="ترجمه <زبان> (ریپلی) — ترجمه پیام، مثال: ترجمه en")
@@ -139,3 +169,69 @@ def setup(bot: Bot):
                         os.remove(p)
                     except Exception:
                         pass
+
+    # ---------- لغت‌نامه صوتی ----------
+    @bot.cmd("معنی", "لغت", "dict", cat="ترجمه",
+             help="معنی <کلمه> — لغت‌نامه صوتی: معنی + معنی‌های دیگر + تلفظ وایسی؛ "
+                  "مثال: معنی sunset | معنی کتاب (ریپلی هم می‌شود)")
+    async def _dict(event, ctx, args):
+        import html as _html
+        term = args.strip()
+        if not term and event.is_reply:
+            src0 = await event.get_reply_message()
+            term = (src0.raw_text or "").strip().split("\n")[0][:60]
+        if not term:
+            return await ctx.reply(event, "❗ کلمه بده: معنی sunset")
+        if len(term.split()) > 6:
+            term = " ".join(term.split()[:6])
+        note = await ctx.reply(event, "📚 در حال پیدا کردن معنی...")
+        is_fa = _looks_fa(term)
+        sl, tl_ = ("fa", "en") if is_fa else ("en", "fa")
+        try:
+            from deep_translator import GoogleTranslator
+            tr = GoogleTranslator(source=sl, target=tl_).translate(term[:80]) or "؟"
+        except Exception as e:
+            return await ctx.client.edit_message(event.chat_id, note.id, f"❌ ترجمه نشد: {e}")
+        lines = [f"📚 <b>{_html.escape(term)}</b> "
+                 f"{'→ 🇬🇧' if is_fa else '→ 🇮🇷'} <b>{_html.escape(str(tr))}</b>"]
+        ph, senses = (None, [])
+        if not is_fa:
+            try:
+                ph, senses = await asyncio.to_thread(_fetch_dict, term)
+            except Exception:
+                pass
+        if ph:
+            lines.append(f"🗣 {_html.escape(ph)}")
+        for pos, d_ in senses[:3]:
+            lines.append(f"• ({_html.escape(pos)}) {_html.escape(d_)}")
+        await ctx.client.edit_message(event.chat_id, note.id, "\n".join(lines),
+                                      parse_mode="html")
+        # تلفظ وایسی
+        try:
+            import edge_tts
+            v = VOICES.get("fa" if is_fa else "en")
+            if v:
+                mp3 = tmp_path("mp3")
+                ogg = None
+                try:
+                    await asyncio.wait_for(
+                        edge_tts.Communicate(term[:100], v).save(mp3), timeout=60)
+                    ogg = await asyncio.to_thread(_to_ogg, mp3)
+                    if ogg:
+                        await ctx.client.send_file(
+                            event.chat_id, ogg,
+                            attributes=[types.DocumentAttributeAudio(
+                                await asyncio.to_thread(_dur, ogg), voice=True)],
+                            reply_to=note.id)
+                    else:
+                        await ctx.client.send_file(event.chat_id, mp3, voice_note=True,
+                                                   reply_to=note.id)
+                finally:
+                    for p in (mp3, ogg):
+                        if p:
+                            try:
+                                os.remove(p)
+                            except Exception:
+                                pass
+        except Exception:
+            pass
