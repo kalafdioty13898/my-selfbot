@@ -46,7 +46,7 @@ def setup(bot: Bot):
                + (f"👥 گپ مشترک: {common}\n" if common is not None else ""))
         path = None
         try:
-            path = await ctx.client.download_profile_photo(u, file=tmp_path("pf"))
+            path = await ctx.client.download_profile_photo(u, file=tmp_path("jpg"))
         except Exception:
             path = None
         if path:

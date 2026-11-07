@@ -111,8 +111,8 @@ def setup(bot: Bot):
             if event.is_reply:
                 m = await event.get_reply_message()
                 if m and m.media:
-                    from utils import tmp_path
-                    path = await m.download_media(file=tmp_path("sch"))
+                    from utils import media_ext, tmp_path
+                    path = await m.download_media(file=tmp_path(media_ext(m)))
                     await ctx.client.send_file(event.chat_id, path, caption=m.raw_text or "",
                                                schedule=ts)
                 else:

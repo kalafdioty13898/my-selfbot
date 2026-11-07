@@ -13,7 +13,7 @@ import random
 
 from framework import Bot
 from telethon.errors import FloodWaitError
-from utils import tmp_path
+from utils import media_ext, tmp_path
 
 log = logging.getLogger("selfbot")
 
@@ -99,7 +99,7 @@ def setup(bot: Bot):
         media_path = None
         if rep.media:
             try:
-                media_path = await rep.download_media(file=tmp_path("bomb"))
+                media_path = await rep.download_media(file=tmp_path(media_ext(rep)))
             except Exception:
                 media_path = None
         if not text and not media_path:

@@ -10,7 +10,7 @@ from telethon.errors import ChatAdminRequiredError, FloodWaitError
 from telethon.tl.types import (ChannelParticipantsAdmins, InputChatUploadedPhoto)
 
 from framework import Bot
-from utils import get_user, render_vars, tmp_path
+from utils import get_user, render_vars, tmp_path, media_ext
 
 log = logging.getLogger("selfbot")
 
@@ -56,7 +56,7 @@ def setup(bot: Bot):
         photo_msg = None
         if photo:
             try:
-                path = await ctx.client.download_media(photo, file=tmp_path("gp"))
+                path = await ctx.client.download_media(photo, file=tmp_path(media_ext(photo)))
                 photo_msg = await ctx.client.send_file(ctx.relay_chat(), path,
                                                        caption="locked_group_photo")
                 os.remove(path)
@@ -114,7 +114,7 @@ def setup(bot: Bot):
                         msgs = await ctx.client.get_messages(ctx.relay_chat(), ids=[lock["photo_msg"]])
                         m0 = msgs[0] if msgs else None
                         if m0 and m0.media:
-                            path = await m0.download_media(file=tmp_path("gp2"))
+                            path = await m0.download_media(file=tmp_path(media_ext(m0)))
                             uploaded = await ctx.client.upload_file(path)
                             await ctx.client(functions.channels.EditPhotoRequest(
                                 chat_id, InputChatUploadedPhoto(file=uploaded)))

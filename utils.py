@@ -170,6 +170,46 @@ def marked_id(ent):
     return str(getattr(ent, "id", ent))
 
 
+# ---------- پسوند واقعی مدیا ----------
+MIME_EXT = {
+    "audio/ogg": "ogg", "audio/opus": "ogg", "audio/flac": "flac",
+    "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/aac": "aac",
+    "audio/wav": "wav", "audio/x-wav": "wav",
+    "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
+    "video/x-matroska": "mkv", "video/avi": "avi", "video/x-msvideo": "avi",
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
+    "image/gif": "gif", "image/heic": "heic", "image/bmp": "bmp",
+    "application/x-tgsticker": "tgs",
+    "application/pdf": "pdf", "application/zip": "zip",
+    "application/vnd.android.package-archive": "apk",
+    "text/plain": "txt",
+}
+
+
+def media_ext(obj):
+    """پسوند واقعی مدیا برای دانلود: عکس=jpg، ویس=ogg، ویدیو/گیف=mp4،
+    استیکر=webp/webm/tgs، سند=از mime یا نام فایل اصل.
+    قبلاً دانلودها پسوند فیک می‌گرفتند (.ttl/.ad/.chan/.bin) و بازکردن فایل
+    روی گوشی خراب بود. ورودی: Message، خود آبجکت مدیا، یا Photo."""
+    media = getattr(obj, "media", None) or obj
+    cn = type(media).__name__
+    if cn in ("MessageMediaPhoto", "Photo"):
+        return "jpg"
+    if cn != "MessageMediaDocument":
+        return "bin"
+    doc = getattr(media, "document", None)
+    mime = (getattr(doc, "mime_type", "") or "").lower()
+    if mime in MIME_EXT:
+        return MIME_EXT[mime]
+    for a in (getattr(doc, "attributes", None) or []):
+        fn = getattr(a, "file_name", None)
+        if fn and "." in fn:
+            e = fn.rsplit(".", 1)[1].lower().strip()
+            if 1 <= len(e) <= 8 and e.isalnum():
+                return e
+    return "bin"
+
+
 def human_size(n):
     for u in ["B", "KB", "MB", "GB"]:
         if n < 1024:

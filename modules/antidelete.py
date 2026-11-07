@@ -11,7 +11,7 @@ from collections import OrderedDict
 from telethon import events, functions
 
 from framework import Bot
-from utils import tmp_path
+from utils import media_ext, tmp_path
 
 log = logging.getLogger("selfbot")
 CACHE_MAX = 3000
@@ -38,7 +38,7 @@ def setup(bot: Bot):
                 size = msg.file.size if msg.file else 0
                 if size and size <= MEDIA_KEEP:
                     try:
-                        item["path"] = await msg.download_media(file=tmp_path("ad"))
+                        item["path"] = await msg.download_media(file=tmp_path(media_ext(msg)))
                     except Exception:
                         pass
             cache[key] = item
